@@ -23,7 +23,7 @@ interface PublishEventData {
 
 interface ReformulateEventData {
   postId: string;
-  feedback: string;
+  feedback?: string;
 }
 
 function slidesFromJson(value: Prisma.JsonValue | null): GeneratedSlide[] {
@@ -264,10 +264,13 @@ export const reformulatePostWithFeedback = inngest.createFunction(
   { event: "posts/reformulate.requested" },
   async ({ event, step }) => {
     const data = event.data as ReformulateEventData;
-    if (!data.postId || !data.feedback) throw new Error("Evento de feedback incompleto.");
+    if (!data.postId) throw new Error("Evento de feedback sem postId.");
     return step.run("regenerate-content-and-image", async () => {
+      const post = await prisma.post.findUnique({ where: { id: data.postId }, select: { feedbackText: true } });
+      const feedback = data.feedback?.trim() || post?.feedbackText?.trim();
+      if (!feedback) throw new Error("Evento de feedback incompleto.");
       try {
-        await regeneratePostFromFeedback(data.postId, data.feedback);
+        await regeneratePostFromFeedback(data.postId, feedback);
         return { postId: data.postId, status: PostStatus.DRAFT };
       } catch (error) {
         await prisma.post.updateMany({

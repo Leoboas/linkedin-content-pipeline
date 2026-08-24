@@ -11,9 +11,9 @@ function requireLinkedInConfig(): { accessToken: string; personUrn: string } {
   return { accessToken, personUrn };
 }
 
-async function linkedinJson<T>(path: string, init: RequestInit): Promise<T> {
+async function linkedinFetch(path: string, init: RequestInit): Promise<Response> {
   const { accessToken } = requireLinkedInConfig();
-  const response = await fetch(`${LINKEDIN_API}${path}`, {
+  return fetch(`${LINKEDIN_API}${path}`, {
     ...init,
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -22,11 +22,20 @@ async function linkedinJson<T>(path: string, init: RequestInit): Promise<T> {
     },
   });
 
+}
+
+async function linkedinJson<T>(path: string, init: RequestInit): Promise<T> {
+  const response = await linkedinFetch(path, init);
+  const details = await response.text();
   if (!response.ok) {
-    const details = await response.text();
     throw new Error(`LinkedIn ${response.status}: ${details.slice(0, 500)}`);
   }
-  return (await response.json()) as T;
+  if (!details.trim()) return {} as T;
+  try {
+    return JSON.parse(details) as T;
+  } catch (error) {
+    throw new Error(`LinkedIn retornou JSON inválido (${response.status}).`, { cause: error });
+  }
 }
 
 interface RegisteredUpload {
@@ -113,6 +122,7 @@ export async function publishPostToLinkedIn(
 
   const body = {
     author: personUrn,
+    lifecycleState: "PUBLISHED",
     commentary: post.textContent,
     visibility: "PUBLIC",
     distribution: {
@@ -132,11 +142,27 @@ export async function publishPostToLinkedIn(
       : {}),
   };
 
-  const response = await linkedinJson<LinkedInPostResponse>("/posts", {
+  const response = await linkedinFetch("/posts", {
     method: "POST",
     body: JSON.stringify(body),
   });
-  const id = response.id;
+  const responseText = await response.text();
+  if (!response.ok) {
+    if (response.status === 422 && responseText.includes("DUPLICATE_POST")) {
+      const duplicateId = responseText.match(/urn:li:(?:share|ugcPost):[A-Za-z0-9_-]+/)?.[0];
+      if (duplicateId) return { id: duplicateId };
+    }
+    throw new Error(`LinkedIn ${response.status}: ${responseText.slice(0, 500)}`);
+  }
+  let parsed: LinkedInPostResponse = {};
+  if (responseText.trim()) {
+    try {
+      parsed = JSON.parse(responseText) as LinkedInPostResponse;
+    } catch (error) {
+      throw new Error(`LinkedIn retornou JSON inválido (${response.status}).`, { cause: error });
+    }
+  }
+  const id = parsed.id ?? response.headers.get("x-restli-id") ?? undefined;
   if (!id) {
     throw new Error("LinkedIn não retornou o identificador da publicação.");
   }

@@ -159,11 +159,24 @@ export async function POST(request: Request): Promise<NextResponse> {
   const replyMessageId = message?.reply_to_message?.message_id;
   if (!feedback || !postId) return NextResponse.json({ ok: true });
 
+  const existingPost = await prisma.post.findUnique({ where: { id: postId }, select: { status: true, updatedAt: true } });
+  if (!existingPost) return NextResponse.json({ ok: true, postNotFound: true });
+
+  // Permite recuperar uma execução que ficou presa após um timeout da função ou do provedor de IA.
+  const regenerationExpired = existingPost.status === PostStatus.REGENERATING
+    && Date.now() - existingPost.updatedAt.getTime() > 10 * 60 * 1000;
+  if (regenerationExpired) {
+    await prisma.post.updateMany({
+      where: { id: postId, status: PostStatus.REGENERATING },
+      data: { status: PostStatus.REJECTED_PENDING_FEEDBACK },
+    });
+  }
+
   // A geração de imagem pode levar mais tempo que o timeout do webhook do Telegram.
   // Enfileiramos e respondemos imediatamente; o Inngest envia o novo card ao terminar.
   const locked = await prisma.post.updateMany({
     where: { id: postId, status: PostStatus.REJECTED_PENDING_FEEDBACK },
-    data: { status: PostStatus.REGENERATING },
+    data: { status: PostStatus.REGENERATING, feedbackText: feedback },
   });
   if (locked.count === 0) {
     return NextResponse.json({ ok: true, alreadyQueued: true });

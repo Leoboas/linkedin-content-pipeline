@@ -62,6 +62,7 @@ export async function reformulatePostFromFeedback(postId: string, feedback: stri
       mediaUrl,
       engagementScore: prediction.score,
       engagementLabel: prediction.label,
+      feedbackText: feedback,
       status: PostStatus.DRAFT,
     },
   });
