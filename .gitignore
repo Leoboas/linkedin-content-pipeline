@@ -1,0 +1,13 @@
+node_modules/
+.next/
+out/
+dist/
+coverage/
+generated/
+.vercel/
+.env
+.env.local
+.env.*.local
+!.env.example
+*.log
+*.tsbuildinfo

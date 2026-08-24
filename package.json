@@ -1,0 +1,41 @@
+{
+  "name": "linkedin-content-pipeline",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "prisma generate && next build",
+    "postinstall": "prisma generate",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "telegram:set-webhook": "node --experimental-strip-types scripts/set-webhook.ts",
+    "generate:draft": "node scripts/generate-draft.mjs",
+    "queue:reset": "node --experimental-strip-types scripts/reset-queue.ts",
+    "prisma:generate": "prisma generate",
+    "prisma:push": "prisma db push"
+  },
+  "dependencies": {
+    "@huggingface/inference": "^4.13.28",
+    "@prisma/client": "6.19.3",
+    "@vercel/blob": "^1.1.1",
+    "@vercel/og": "^0.8.5",
+    "inngest": "^3.40.0",
+    "ml-cart": "^2.1.1",
+    "ml-regression-multivariate-linear": "^2.0.4",
+    "next": "^15.5.2",
+    "pdf-lib": "^1.17.1",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "prisma": "6.19.3",
+    "typescript": "^5.9.2"
+  },
+  "engines": {
+    "node": ">=20.0.0 <23.0.0"
+  }
+}

@@ -1,0 +1,95 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("POSTGRES_PRISMA_URL")
+}
+
+enum FunnelStage {
+  ATTENTION
+  INTEREST
+  DESIRE
+  ACTION
+}
+
+enum EditorialPillar {
+  TOFU
+  MOFU
+  BOFU
+}
+
+enum FormatType {
+  CAROUSEL_PDF
+  SINGLE_IMAGE
+  TEXT_ONLY
+}
+
+enum PostStatus {
+  DRAFT
+  PENDING
+  AWAITING_APPROVAL
+  APPROVED
+  SCHEDULED
+  PUBLISHED
+  REJECTED
+  REJECTED_PENDING_FEEDBACK
+  REGENERATING
+}
+
+model EditorialLine {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  themes      Json
+  toneOfVoice String   @db.Text
+  aidaRules   String   @db.Text
+  cvCases     String   @db.Text
+  language    String   @default("pt-BR")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  posts       Post[]
+}
+
+model Post {
+  id              String         @id @default(uuid()) @db.Uuid
+  generationKey   String?        @unique
+  editorialLineId String?        @db.Uuid
+  editorialPillar EditorialPillar @default(TOFU)
+  funnelStage     FunnelStage
+  formatType      FormatType
+  title           String
+  textContent     String         @db.Text
+  slidesJson      Json?
+  mediaUrl        String?
+  status          PostStatus     @default(PENDING)
+  scheduledFor    DateTime
+  scheduledDate   DateTime?
+  publishedAt     DateTime?
+  linkedinPostId  String?
+  engagementScore Float?
+  engagementLabel String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  editorialLine   EditorialLine? @relation(fields: [editorialLineId], references: [id], onDelete: SetNull)
+  metrics         PostMetric[]
+
+  @@index([status, scheduledFor])
+  @@index([editorialLineId])
+  @@index([editorialLineId, editorialPillar, status, engagementScore])
+}
+
+model PostMetric {
+  id              String   @id @default(uuid()) @db.Uuid
+  postId          String   @db.Uuid
+  impressions     Int      @default(0)
+  reactions       Int      @default(0)
+  comments        Int      @default(0)
+  shares          Int      @default(0)
+  engagementScore Float?
+  capturedAt      DateTime @default(now())
+  post            Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId, capturedAt])
+  @@index([engagementScore])
+}
