@@ -36,6 +36,7 @@ enum PostStatus {
   REJECTED
   REJECTED_PENDING_FEEDBACK
   REGENERATING
+  PUBLISHING
 }
 
 model EditorialLine {
@@ -46,6 +47,7 @@ model EditorialLine {
   aidaRules   String   @db.Text
   cvCases     String   @db.Text
   language    String   @default("pt-BR")
+  lastStockRefillAt DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   posts       Post[]

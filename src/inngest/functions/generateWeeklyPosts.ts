@@ -4,17 +4,19 @@ import { inngest } from "@/inngest/client";
 import { getAppUrl } from "@/lib/app-url";
 import { predictEngagement } from "@/lib/analytics";
 import { generateCreativeImage, generateWeeklyPosts as generateWithHuggingFace, type GeneratedSlide } from "@/lib/huggingface";
-import { publishPostToLinkedIn } from "@/lib/linkedin";
 import { prisma } from "@/lib/prisma";
+import { publishDuePost } from "@/lib/publishing";
 import { buildRagContext } from "@/lib/rag";
 import { reformulatePostFromFeedback as regeneratePostFromFeedback } from "@/lib/reformulation";
 import { pillarOrder, scheduledDateForPost } from "@/lib/scheduling";
+import { requestBatchIfStockIsLow } from "@/lib/stock";
 import { uploadPublicAsset } from "@/lib/storage";
 import { sendBatchToTelegram } from "@/lib/telegram";
 import { sendFeedbackRetryPrompt } from "@/lib/telegram";
 
 interface WeeklyEventData {
   triggeredAt?: string;
+  batchKey?: string;
 }
 
 interface PublishEventData {
@@ -122,11 +124,12 @@ export const weeklyPostPipeline = inngest.createFunction(
         language: editorialLine.language,
       }, { ragSystemPrompt: ragContext.systemPrompt });
       const weekKey = baseDate.toISOString().slice(0, 10);
+      const batchKey = eventData.batchKey ?? `weekly:${weekKey}`;
       const ids: string[] = [];
 
       const orderedGenerated = [...generated].sort((left, right) => pillarOrder(left.editorialPillar) - pillarOrder(right.editorialPillar));
       for (const [index, post] of orderedGenerated.entries()) {
-        const generationKey = `${weekKey}:${index}`;
+        const generationKey = `${batchKey}:${index}`;
         const existing = await prisma.post.findUnique({ where: { generationKey } });
         if (existing) {
           ids.push(existing.id);
@@ -213,7 +216,7 @@ export const publishApprovedPost = inngest.createFunction(
       return prisma.post.findUnique({ where: { id: data.postId } });
     });
 
-    if (!post || post.status !== PostStatus.APPROVED) {
+    if (!post || (post.status !== PostStatus.APPROVED && post.status !== PostStatus.SCHEDULED)) {
       return { skipped: true, reason: "post-not-approved" };
     }
 
@@ -222,34 +225,19 @@ export const publishApprovedPost = inngest.createFunction(
       throw new Error(`scheduledFor inválido para o post ${post.id}.`);
     }
     if (scheduledFor > new Date()) {
+      await prisma.post.updateMany({
+        where: { id: post.id, status: PostStatus.APPROVED },
+        data: { status: PostStatus.SCHEDULED },
+      });
       await step.sleepUntil("wait-until-scheduled", scheduledFor);
     }
 
     const published = await step.run("publish-to-linkedin", async () => {
-      const current = await prisma.post.findUnique({ where: { id: post.id } });
-      if (!current || current.status !== PostStatus.APPROVED) {
-        return { skipped: true, reason: "post-state-changed" };
-      }
-      const published = await publishPostToLinkedIn(current);
-      await prisma.post.update({
-        where: { id: current.id },
-        data: {
-          status: PostStatus.PUBLISHED,
-          publishedAt: new Date(),
-          linkedinPostId: published.id,
-        },
-      });
-      return published;
+      return publishDuePost(post.id);
     });
 
     await step.run("check-approved-stock", async () => {
-      const remainingApproved = await prisma.post.count({
-        where: { status: { in: [PostStatus.APPROVED, PostStatus.SCHEDULED] } },
-      });
-      if (remainingApproved <= 1) {
-        await inngest.send({ name: "pipeline/generate-batch" });
-      }
-      return { remainingApproved };
+      return requestBatchIfStockIsLow();
     });
 
     return published;
