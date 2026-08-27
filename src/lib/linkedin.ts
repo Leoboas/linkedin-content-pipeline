@@ -1,6 +1,8 @@
 import type { FormatType, Post } from "@prisma/client";
 
 const LINKEDIN_API = "https://api.linkedin.com/v2";
+const LINKEDIN_REST_API = "https://api.linkedin.com/rest";
+const LINKEDIN_VERSION = process.env.LINKEDIN_VERSION ?? "202601";
 
 function requireLinkedInConfig(): { accessToken: string; personUrn: string } {
   const accessToken = process.env.LINKEDIN_ACCESS_TOKEN;
@@ -24,8 +26,35 @@ async function linkedinFetch(path: string, init: RequestInit): Promise<Response>
 
 }
 
+async function linkedinRestFetch(path: string, init: RequestInit): Promise<Response> {
+  const { accessToken } = requireLinkedInConfig();
+  return fetch(`${LINKEDIN_REST_API}${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+      "Linkedin-Version": LINKEDIN_VERSION,
+      "X-Restli-Protocol-Version": "2.0.0",
+    },
+  });
+}
+
 async function linkedinJson<T>(path: string, init: RequestInit): Promise<T> {
   const response = await linkedinFetch(path, init);
+  const details = await response.text();
+  if (!response.ok) {
+    throw new Error(`LinkedIn ${response.status}: ${details.slice(0, 500)}`);
+  }
+  if (!details.trim()) return {} as T;
+  try {
+    return JSON.parse(details) as T;
+  } catch (error) {
+    throw new Error(`LinkedIn retornou JSON inválido (${response.status}).`, { cause: error });
+  }
+}
+
+async function linkedinRestJson<T>(path: string, init: RequestInit): Promise<T> {
+  const response = await linkedinRestFetch(path, init);
   const details = await response.text();
   if (!response.ok) {
     throw new Error(`LinkedIn ${response.status}: ${details.slice(0, 500)}`);
@@ -44,6 +73,7 @@ interface RegisteredUpload {
     uploadMechanism?: {
       "com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest"?: {
         uploadUrl?: string;
+        headers?: Record<string, string>;
       };
     };
   };
@@ -65,7 +95,7 @@ async function registerAndUploadMedia(
     ? "urn:li:digitalmediaRecipe:feedshare-image"
     : "urn:li:digitalmediaRecipe:feedshare-document";
 
-  const registered = await linkedinJson<RegisteredUpload>("/assets?action=registerUpload", {
+  const registered = await linkedinRestJson<RegisteredUpload>("/assets?action=registerUpload", {
     method: "POST",
     body: JSON.stringify({
       registerUploadRequest: {
@@ -77,7 +107,7 @@ async function registerAndUploadMedia(
             identifier: "urn:li:userGeneratedContent",
           },
         ],
-        ...(isImage ? {} : { supportedUploadMechanism: ["SYNCHRONOUS_UPLOAD"] }),
+        supportedUploadMechanism: ["SYNCHRONOUS_UPLOAD"],
       },
     }),
   });
@@ -97,6 +127,7 @@ async function registerAndUploadMedia(
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": isImage ? "image/png" : "application/pdf",
       "Content-Length": String(media.byteLength),
+      ...(upload.headers ?? {}),
     },
     body: media,
   });
