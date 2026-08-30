@@ -10,11 +10,10 @@ import { publishDuePost } from "@/lib/publishing";
 import { buildRagContext } from "@/lib/rag";
 import { reformulatePostFromFeedback as regeneratePostFromFeedback } from "@/lib/reformulation";
 import { reconcileOverduePosts } from "@/lib/scheduler";
-import { pillarOrder, scheduledDateForPost } from "@/lib/scheduling";
+import { getNextPipelineBaseDate, pillarOrder, scheduledDateForPost } from "@/lib/scheduling";
 import { requestBatchIfStockIsLow } from "@/lib/stock";
 import { uploadPublicAsset } from "@/lib/storage";
-import { sendBatchToTelegram } from "@/lib/telegram";
-import { sendFeedbackRetryPrompt } from "@/lib/telegram";
+import { sendBatchToTelegram, sendFeedbackRetryPrompt, sendPostForApproval } from "@/lib/telegram";
 
 interface WeeklyEventData {
   triggeredAt?: string;
@@ -115,7 +114,8 @@ export const weeklyPostPipeline = inngest.createFunction(
       }
 
       const eventData = event.data as WeeklyEventData;
-      const baseDate = eventData.triggeredAt ? new Date(eventData.triggeredAt) : new Date();
+      const referenceDate = eventData.triggeredAt ? new Date(eventData.triggeredAt) : new Date();
+      const baseDate = getNextPipelineBaseDate(referenceDate);
       if (Number.isNaN(baseDate.getTime())) throw new Error("triggeredAt inválido.");
       const ragContext = await buildRagContext(editorialLine.id);
       const generated = await generateWithHuggingFace({
@@ -255,26 +255,40 @@ export const reformulatePostWithFeedback = inngest.createFunction(
   async ({ event, step }) => {
     const data = event.data as ReformulateEventData;
     if (!data.postId) throw new Error("Evento de feedback sem postId.");
-    return step.run("regenerate-content-and-image", async () => {
-      const post = await prisma.post.findUnique({ where: { id: data.postId }, select: { feedbackText: true } });
-      const feedback = data.feedback?.trim() || post?.feedbackText?.trim();
-      if (!feedback) throw new Error("Evento de feedback incompleto.");
-      try {
-        await regeneratePostFromFeedback(data.postId, feedback);
+    const post = await prisma.post.findUnique({ where: { id: data.postId }, select: { feedbackText: true } });
+    const feedback = data.feedback?.trim() || post?.feedbackText?.trim();
+    if (!feedback) throw new Error("Evento de feedback incompleto.");
+
+    try {
+      await step.run("regenerate-content-and-image", async () => {
+        await regeneratePostFromFeedback(data.postId, feedback, { sendTelegram: false });
         return { postId: data.postId, status: PostStatus.DRAFT };
-      } catch (error) {
-        await prisma.post.updateMany({
-          where: { id: data.postId, status: PostStatus.REGENERATING },
-          data: { status: PostStatus.REJECTED_PENDING_FEEDBACK },
-        });
-        try {
-          await sendFeedbackRetryPrompt(data.postId);
-        } catch (notificationError) {
-          console.error("Falha ao enviar prompt de retry do feedback:", notificationError);
+      });
+
+      // Delivery is an independent step so a transient Telegram failure can
+      // be retried without regenerating the content and image.
+      await step.run("send-regenerated-approval-card", async () => {
+        const regenerated = await prisma.post.findUnique({ where: { id: data.postId } });
+        if (!regenerated || regenerated.status !== PostStatus.DRAFT) {
+          throw new Error("Rascunho reformulado nao encontrado para envio.");
         }
-        console.error(`Reformulacao do post ${data.postId} falhou:`, error);
-        return { postId: data.postId, status: PostStatus.REJECTED_PENDING_FEEDBACK, failed: true };
+        await sendPostForApproval(regenerated);
+        return { postId: data.postId, sent: true };
+      });
+
+      return { postId: data.postId, status: PostStatus.DRAFT, sent: true };
+    } catch (error) {
+      await prisma.post.updateMany({
+        where: { id: data.postId, status: { in: [PostStatus.REGENERATING, PostStatus.DRAFT] } },
+        data: { status: PostStatus.REJECTED_PENDING_FEEDBACK },
+      });
+      try {
+        await sendFeedbackRetryPrompt(data.postId);
+      } catch (notificationError) {
+        console.error("Falha ao enviar prompt de retry do feedback:", notificationError);
       }
-    });
+      console.error(`Reformulacao do post ${data.postId} falhou:`, error);
+      return { postId: data.postId, status: PostStatus.REJECTED_PENDING_FEEDBACK, failed: true };
+    }
   },
 );

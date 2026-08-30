@@ -16,7 +16,20 @@ export interface RagExample {
 export interface RagContext {
   dossier: string;
   examples: RagExample[];
+  latestPublished: PublishedPerformance | null;
   systemPrompt: string;
+}
+
+export interface PublishedPerformance {
+  title: string;
+  textContent: string;
+  editorialPillar: EditorialPillar;
+  engagementScore: number | null;
+  publishedAt: Date | null;
+  impressions: number;
+  reactions: number;
+  comments: number;
+  shares: number;
 }
 
 async function loadBrandDossier(): Promise<string> {
@@ -52,6 +65,38 @@ async function loadTopPublishedPosts(editorialLineId: string, editorialPillar: E
   });
 }
 
+async function loadLatestPublishedPerformance(editorialLineId: string): Promise<PublishedPerformance | null> {
+  const post = await prisma.post.findFirst({
+    where: { editorialLineId, status: "PUBLISHED" },
+    orderBy: [{ publishedAt: "desc" }, { updatedAt: "desc" }],
+    select: {
+      title: true,
+      textContent: true,
+      editorialPillar: true,
+      engagementScore: true,
+      publishedAt: true,
+      metrics: {
+        orderBy: { capturedAt: "desc" },
+        take: 1,
+        select: { impressions: true, reactions: true, comments: true, shares: true },
+      },
+    },
+  });
+  if (!post) return null;
+  const metric = post.metrics[0];
+  return {
+    title: post.title,
+    textContent: post.textContent.slice(0, 1600),
+    editorialPillar: post.editorialPillar,
+    engagementScore: post.engagementScore,
+    publishedAt: post.publishedAt,
+    impressions: metric?.impressions ?? 0,
+    reactions: metric?.reactions ?? 0,
+    comments: metric?.comments ?? 0,
+    shares: metric?.shares ?? 0,
+  };
+}
+
 function formatExamples(examples: RagExample[]): string {
   if (examples.length === 0) {
     return "Ainda não há posts publicados com score de engajamento neste histórico. Use o dossier como fonte principal e não invente resultados.";
@@ -64,10 +109,28 @@ function formatExamples(examples: RagExample[]): string {
   ].join("\n")).join("\n\n---\n\n");
 }
 
+function formatLatestPerformance(performance: PublishedPerformance | null): string {
+  if (!performance) {
+    return "Ainda nao ha um post publicado para calibrar a proxima rodada. Use boas praticas de gancho, evidencia e CTA sem inventar metricas.";
+  }
+  const interactions = performance.reactions + performance.comments + performance.shares;
+  const rate = performance.impressions > 0
+    ? ((interactions / performance.impressions) * 100).toFixed(2)
+    : "sem dados de impressoes";
+  return [
+    `Ultimo post publicado (${performance.editorialPillar}): ${performance.title}`,
+    `Score projetado registrado: ${performance.engagementScore === null ? "sem score" : `${performance.engagementScore.toFixed(1)}/100`}.`,
+    `Metricas coletadas: ${performance.impressions} impressoes, ${performance.reactions} reacoes, ${performance.comments} comentarios e ${performance.shares} compartilhamentos (taxa de interacao: ${rate}).`,
+    `Texto de referencia: ${performance.textContent}`,
+    "Aprendizado obrigatorio: aumente a especificidade do gancho nas duas primeiras linhas, conecte uma evidencia verificavel a uma decisao tecnica, use no maximo uma metrica autorizada e encerre com CTA conversacional. Nao copie o texto nem invente resultados.",
+  ].join("\n");
+}
+
 export async function buildRagContext(editorialLineId: string): Promise<RagContext> {
-  const [dossier, groupedExamples] = await Promise.all([
+  const [dossier, groupedExamples, latestPublished] = await Promise.all([
     loadBrandDossier(),
     Promise.all(pillars.map((pillar) => loadTopPublishedPosts(editorialLineId, pillar))),
+    loadLatestPublishedPerformance(editorialLineId),
   ]);
   const examples = groupedExamples.flat();
   const systemPrompt = [
@@ -79,9 +142,11 @@ export async function buildRagContext(editorialLineId: string): Promise<RagConte
     dossier,
     "\n===== exemplos de alta performance (RAG) =====\n",
     formatExamples(examples),
+    "\n===== aprendizado do ultimo post publicado =====\n",
+    formatLatestPerformance(latestPublished),
   ].join("\n");
 
-  return { dossier, examples, systemPrompt };
+  return { dossier, examples, latestPublished, systemPrompt };
 }
 
 export async function getTopRagPosts(editorialLineId: string, editorialPillar: EditorialPillar): Promise<RagExample[]> {

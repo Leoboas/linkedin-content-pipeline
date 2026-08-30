@@ -218,6 +218,31 @@ function parseGeneratedPosts(value: unknown): GeneratedPost[] {
   });
 }
 
+function ensureVisualMix(posts: GeneratedPost[]): GeneratedPost[] {
+  const visualFormatByPillar: Record<EditorialPillar, FormatType> = {
+    TOFU: "CAROUSEL_PDF",
+    MOFU: "SINGLE_IMAGE",
+    BOFU: "CAROUSEL_PDF",
+  };
+  return posts.map((post) => {
+    const slides = post.slides.length > 0
+      ? post.slides
+      : [{
+          title: post.title,
+          bullets: post.textContent
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter(Boolean)
+            .slice(0, 5),
+        }];
+    return {
+      ...post,
+      formatType: post.formatType === "TEXT_ONLY" ? visualFormatByPillar[post.editorialPillar] : post.formatType,
+      slides,
+    };
+  });
+}
+
 export async function generateWeeklyPosts(
   context: EditorialContext,
   options: { ragSystemPrompt?: string } = {},
@@ -232,6 +257,8 @@ export async function generateWeeklyPosts(
         role: "system",
         content: [
           options.ragSystemPrompt,
+          "Apply the RAG performance learnings: use a concrete hook in the first two lines, one real trade-off, authorized evidence and a conversational CTA. Never invent metrics.",
+          "For visual variety, use CAROUSEL_PDF for TOFU, SINGLE_IMAGE for MOFU and CAROUSEL_PDF for BOFU.",
           "Você é um estrategista sênior de conteúdo B2B para LinkedIn.",
           "Crie posts em português do Brasil, salvo indicação contrária.",
           "Use AIDA: ATTENTION captura atenção com uma tensão real; INTEREST ensina; DESIRE mostra transformação e prova; ACTION contém um próximo passo claro.",
@@ -259,7 +286,7 @@ export async function generateWeeklyPosts(
   const content = completion.choices[0]?.message.content;
   if (!content) throw new Error("A Hugging Face retornou uma resposta vazia.");
   try {
-    return parseGeneratedPosts(parseModelJson(content));
+    return ensureVisualMix(parseGeneratedPosts(parseModelJson(content)));
   } catch (error) {
     if (error instanceof SyntaxError) throw new Error("Não foi possível interpretar o JSON retornado pela Hugging Face.", { cause: error });
     throw error;

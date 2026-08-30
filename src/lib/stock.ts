@@ -2,13 +2,12 @@ import { PostStatus } from "@prisma/client";
 import { inngest } from "@/inngest/client";
 import { prisma } from "@/lib/prisma";
 
-const activeQueueStatuses: PostStatus[] = [
+// Posts waiting for feedback or stuck regenerating are not usable inventory.
+// Counting them could suppress the refill needed to unblock the queue.
+const availableQueueStatuses: PostStatus[] = [
   PostStatus.AWAITING_APPROVAL,
-  PostStatus.DRAFT,
   PostStatus.APPROVED,
   PostStatus.SCHEDULED,
-  PostStatus.REGENERATING,
-  PostStatus.REJECTED_PENDING_FEEDBACK,
 ];
 
 export async function requestBatchIfStockIsLow(options: { force?: boolean } = {}): Promise<{
@@ -16,7 +15,7 @@ export async function requestBatchIfStockIsLow(options: { force?: boolean } = {}
   requested: boolean;
 }> {
   const remaining = await prisma.post.count({
-    where: { status: { in: activeQueueStatuses } },
+    where: { status: { in: availableQueueStatuses } },
   });
   if (!options.force && remaining > 1) return { remaining, requested: false };
 

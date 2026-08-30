@@ -6,6 +6,7 @@ export async function publishDuePost(postId: string): Promise<
   { published: true; id: string } | { published: false; reason: string }
 > {
   const now = new Date();
+  console.info("[linkedin] attempting due post", { postId, now: now.toISOString() });
   const claimed = await prisma.post.updateMany({
     where: {
       id: postId,
@@ -31,12 +32,17 @@ export async function publishDuePost(postId: string): Promise<
         linkedinPostId: published.id,
       },
     });
+    console.info("[linkedin] post published", { postId: post.id, linkedinPostId: published.id });
     return { published: true, id: published.id };
   } catch (error) {
     // Permite que o Inngest ou a próxima manutenção tente novamente.
     await prisma.post.updateMany({
       where: { id: post.id, status: PostStatus.PUBLISHING },
       data: { status: PostStatus.SCHEDULED },
+    });
+    console.error("[linkedin] publication failed", {
+      postId: post.id,
+      error: error instanceof Error ? error.message : String(error),
     });
     throw error;
   }

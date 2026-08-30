@@ -7,7 +7,11 @@ import { buildRagContext } from "@/lib/rag";
 import { sendPostForApproval } from "@/lib/telegram";
 import { uploadPublicAsset } from "@/lib/storage";
 
-export async function reformulatePostFromFeedback(postId: string, feedback: string): Promise<void> {
+export async function reformulatePostFromFeedback(
+  postId: string,
+  feedback: string,
+  options: { sendTelegram?: boolean } = {},
+): Promise<void> {
   const current = await prisma.post.findUnique({ where: { id: postId } });
   if (!current) throw new Error("Post associado ao feedback nao encontrado.");
   const reformulableStatuses = new Set<PostStatus>([
@@ -68,5 +72,7 @@ export async function reformulatePostFromFeedback(postId: string, feedback: stri
     },
   });
 
-  await sendPostForApproval(updated);
+  if (options.sendTelegram !== false) {
+    await sendPostForApproval(updated);
+  }
 }

@@ -20,6 +20,19 @@ export function getPipelineBaseDate(referenceDate = new Date()): Date {
   return baseDate;
 }
 
+/**
+ * Returns the next Monday that still has a complete TOFU/MOFU/BOFU cadence.
+ * The weekly cron runs on Sunday, so using the current week's Monday would
+ * create a batch whose first publication window is already in the past.
+ */
+export function getNextPipelineBaseDate(referenceDate = new Date()): Date {
+  const baseDate = getPipelineBaseDate(referenceDate);
+  if (getOptimalPostingTime(baseDate, "TOFU") <= referenceDate) {
+    baseDate.setUTCDate(baseDate.getUTCDate() + 7);
+  }
+  return baseDate;
+}
+
 export function scheduledDateForPillar(
   pillar: EditorialPillar,
   baseDate = getPipelineBaseDate(),
