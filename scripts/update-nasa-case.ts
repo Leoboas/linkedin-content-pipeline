@@ -58,7 +58,8 @@ try {
     orderBy: { createdAt: "desc" },
   });
   if (!post) throw new Error("Nenhum post BOFU encontrado para atualizar.");
-  const alreadyPresented = post.title === title
+  const alreadyPresented = !process.argv.includes("--resend")
+    && post.title === title
     && post.status === PostStatus.AWAITING_APPROVAL
     && post.scheduledDate?.getTime() === scheduled.getTime();
 
