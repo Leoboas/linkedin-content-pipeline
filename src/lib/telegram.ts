@@ -61,13 +61,14 @@ export async function sendPostForApproval(post: ApprovalPost): Promise<void> {
     postMarker(post.id),
   ].join("\n");
 
-  await telegramRequest("sendMessage", {
+  const sent = await telegramRequest<{ message_id?: number }>("sendMessage", {
     chat_id: chatId,
     text: message,
     parse_mode: "HTML",
     disable_web_page_preview: false,
     reply_markup: approvalKeyboard(post.id),
   });
+  console.info("[telegram] approval card sent", { postId: post.id, messageId: sent?.message_id });
 }
 
 export async function sendBatchToTelegram(posts: ApprovalPost[]): Promise<void> {

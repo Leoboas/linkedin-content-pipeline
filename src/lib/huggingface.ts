@@ -243,6 +243,49 @@ function ensureVisualMix(posts: GeneratedPost[]): GeneratedPost[] {
   });
 }
 
+function needsEditorialRefinement(posts: GeneratedPost[]): boolean {
+  const genericLanguage = /vamos explorar|continue com a gente|junte-se a nos|veja como implementamos|vamos olhar para/i;
+  return posts.some((post) => {
+    const content = `${post.title}\n${post.textContent}`;
+    return post.textContent.length < 500
+      || genericLanguage.test(content)
+      || !/[!?]/.test(post.title)
+      || !/(comente|qual|como|conhec|acesse|teste|compartilhe|responda)/i.test(post.textContent);
+  });
+}
+
+async function refineGeneratedPosts(posts: GeneratedPost[], ragSystemPrompt?: string): Promise<GeneratedPost[]> {
+  const completion = await getHuggingFaceClient().chatCompletion({
+    model: TEXT_MODEL,
+    temperature: 0.55,
+    max_tokens: 6000,
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content: [
+          ragSystemPrompt,
+          "You are the final senior editor for B2B LinkedIn content in Brazilian Portuguese.",
+          "Rewrite the drafts with original, specific and useful content. Keep exactly one TOFU, one MOFU and one BOFU.",
+          "Each post must have a strong hook in the first two lines, 500 to 1400 characters, at least two concrete technical details or trade-offs, and a conversational CTA.",
+          "Remove generic filler such as 'vamos explorar', 'continue com a gente' and 'junte-se a nos'. Never invent metrics, clients or outcomes.",
+          "Return only valid JSON in the format {posts:[...]}.",
+        ].filter(Boolean).join(" "),
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          drafts: posts,
+          instruction: "Preserve the editorial pillars and AIDA stages, but replace generic copy with actionable insight and evidence from the dossier.",
+        }),
+      },
+    ],
+  });
+  const content = completion.choices[0]?.message.content;
+  if (!content) throw new Error("A Hugging Face retornou uma resposta vazia na revisao editorial.");
+  return ensureVisualMix(parseGeneratedPosts(parseModelJson(content)));
+}
+
 export async function generateWeeklyPosts(
   context: EditorialContext,
   options: { ragSystemPrompt?: string } = {},
@@ -286,7 +329,14 @@ export async function generateWeeklyPosts(
   const content = completion.choices[0]?.message.content;
   if (!content) throw new Error("A Hugging Face retornou uma resposta vazia.");
   try {
-    return ensureVisualMix(parseGeneratedPosts(parseModelJson(content)));
+    const parsed = ensureVisualMix(parseGeneratedPosts(parseModelJson(content)));
+    if (!needsEditorialRefinement(parsed)) return parsed;
+    try {
+      return await refineGeneratedPosts(parsed, options.ragSystemPrompt);
+    } catch (refinementError) {
+      console.warn("Revisao editorial automatica indisponivel; usando o primeiro rascunho:", refinementError);
+      return parsed;
+    }
   } catch (error) {
     if (error instanceof SyntaxError) throw new Error("Não foi possível interpretar o JSON retornado pela Hugging Face.", { cause: error });
     throw error;
