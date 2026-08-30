@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { inngest } from "@/inngest/client";
+import { reconcileOverduePosts } from "@/lib/scheduler";
 
 function isAuthorized(request: Request): boolean {
   const secret = process.env.CRON_SECRET;
@@ -13,6 +14,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
 
   const triggeredAt = new URL(request.url).searchParams.get("triggeredAt") ?? new Date().toISOString();
+  await reconcileOverduePosts();
   await inngest.send({
     name: "posts/generate.weekly",
     data: { triggeredAt },

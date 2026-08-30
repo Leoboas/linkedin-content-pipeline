@@ -1,5 +1,5 @@
 import type { EditorialPillar } from "@prisma/client";
-import { getOptimalPostingTime } from "@/lib/dates";
+import { getOptimalPostingTime } from "./dates.ts";
 
 const pillarOffsets: Record<EditorialPillar, number> = {
   TOFU: 0,

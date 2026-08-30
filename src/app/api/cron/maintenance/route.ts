@@ -3,6 +3,7 @@ import { PostStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { publishDuePost } from "@/lib/publishing";
 import { reformulatePostFromFeedback } from "@/lib/reformulation";
+import { reconcileOverduePosts } from "@/lib/scheduler";
 import { requestBatchIfStockIsLow } from "@/lib/stock";
 
 export const maxDuration = 300;
@@ -19,6 +20,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   }
 
   const now = new Date();
+  const reconciliation = await reconcileOverduePosts(now);
   const staleBefore = new Date(now.getTime() - 10 * 60 * 1000);
   const errors: string[] = [];
   let regenerated = 0;
@@ -97,6 +99,7 @@ export async function GET(request: Request): Promise<NextResponse> {
 
   return NextResponse.json({
     ok: errors.length === 0,
+    reconciliation,
     regenerated,
     published,
     stock,

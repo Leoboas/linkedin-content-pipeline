@@ -11,6 +11,8 @@
     "typecheck": "tsc --noEmit",
     "telegram:set-webhook": "node --experimental-strip-types scripts/set-webhook.ts",
     "generate:draft": "node scripts/generate-draft.mjs",
+    "queue:reconcile": "node --experimental-strip-types scripts/reconcile-queue.ts",
+    "case:nasa": "node --experimental-strip-types scripts/update-nasa-case.ts",
     "queue:reset": "node --experimental-strip-types scripts/reset-queue.ts",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push"

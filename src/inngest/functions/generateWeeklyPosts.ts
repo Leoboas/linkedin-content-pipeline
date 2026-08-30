@@ -4,10 +4,12 @@ import { inngest } from "@/inngest/client";
 import { getAppUrl } from "@/lib/app-url";
 import { predictEngagement } from "@/lib/analytics";
 import { generateCreativeImage, generateWeeklyPosts as generateWithHuggingFace, type GeneratedSlide } from "@/lib/huggingface";
+import { buildImagePrompt } from "@/lib/image-prompt-engine";
 import { prisma } from "@/lib/prisma";
 import { publishDuePost } from "@/lib/publishing";
 import { buildRagContext } from "@/lib/rag";
 import { reformulatePostFromFeedback as regeneratePostFromFeedback } from "@/lib/reformulation";
+import { reconcileOverduePosts } from "@/lib/scheduler";
 import { pillarOrder, scheduledDateForPost } from "@/lib/scheduling";
 import { requestBatchIfStockIsLow } from "@/lib/stock";
 import { uploadPublicAsset } from "@/lib/storage";
@@ -89,13 +91,12 @@ async function renderSlidePng(
 }
 
 async function renderSingleImage(postId: string, title: string, textContent: string, slides: GeneratedSlide[]): Promise<string> {
-  const visualBrief = [
-    `Título: ${title}`,
-    `Mensagem: ${textContent.slice(0, 1200)}`,
-    slides.length > 0 ? `Pontos visuais: ${slides[0].bullets.join("; ")}` : "",
-    "Criativo profissional para LinkedIn, estilo dark mode, liderança em tecnologia, engenharia de dados e growth, sem texto ilegível, sem logotipos de terceiros.",
-  ].filter(Boolean).join("\n");
-  const imageBuffer = await generateCreativeImage(visualBrief);
+  const imagePrompt = buildImagePrompt({
+    title,
+    textContent,
+    visualBullets: slides[0]?.bullets,
+  });
+  const imageBuffer = await generateCreativeImage(imagePrompt);
   return uploadPublicAsset(`linkedin-posts/${postId}-${encodeURIComponent(title)}.png`, imageBuffer, "image/png");
 }
 
@@ -106,6 +107,7 @@ export const weeklyPostPipeline = inngest.createFunction(
   },
   [{ event: "posts/generate.weekly" }, { event: "pipeline/generate-batch" }],
   async ({ event, step }) => {
+    await step.run("reconcile-overdue-posts", async () => reconcileOverduePosts());
     const postIds = await step.run("generate-content", async () => {
       const editorialLine = await prisma.editorialLine.findFirst({ orderBy: { createdAt: "asc" } });
       if (!editorialLine) {

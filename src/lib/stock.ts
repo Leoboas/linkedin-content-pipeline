@@ -11,14 +11,14 @@ const activeQueueStatuses: PostStatus[] = [
   PostStatus.REJECTED_PENDING_FEEDBACK,
 ];
 
-export async function requestBatchIfStockIsLow(): Promise<{
+export async function requestBatchIfStockIsLow(options: { force?: boolean } = {}): Promise<{
   remaining: number;
   requested: boolean;
 }> {
   const remaining = await prisma.post.count({
     where: { status: { in: activeQueueStatuses } },
   });
-  if (remaining > 1) return { remaining, requested: false };
+  if (!options.force && remaining > 1) return { remaining, requested: false };
 
   const editorialLine = await prisma.editorialLine.findFirst({
     orderBy: { createdAt: "asc" },

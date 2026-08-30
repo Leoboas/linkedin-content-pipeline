@@ -3,6 +3,7 @@ import { PostStatus } from "@prisma/client";
 import { inngest } from "@/inngest/client";
 import { prisma } from "@/lib/prisma";
 import { scheduledDateForPillar } from "@/lib/scheduling";
+import { requestBatchIfStockIsLow } from "@/lib/stock";
 import {
   answerCallbackQuery,
   editTelegramMessage,
@@ -121,6 +122,13 @@ async function handleCallback(callback: TelegramCallbackQuery): Promise<NextResp
       } catch (error) {
         console.error(`Falha ao enviar a pergunta de feedback do post ${postId}:`, error);
       }
+    }
+  }
+  if (isReject) {
+    try {
+      await requestBatchIfStockIsLow({ force: true });
+    } catch (error) {
+      console.error(`Falha ao solicitar reposição após recusa do post ${postId}:`, error);
     }
   }
 

@@ -1,6 +1,7 @@
 import { FormatType, PostStatus } from "@prisma/client";
 import { predictEngagement } from "@/lib/analytics";
 import { generateCreativeImage, regeneratePostWithFeedback } from "@/lib/huggingface";
+import { buildImagePrompt } from "@/lib/image-prompt-engine";
 import { prisma } from "@/lib/prisma";
 import { buildRagContext } from "@/lib/rag";
 import { sendPostForApproval } from "@/lib/telegram";
@@ -37,13 +38,13 @@ export async function reformulatePostFromFeedback(postId: string, feedback: stri
     dossier: ragContext.dossier,
     ragExamples: ragContext.examples,
   });
-  const imagePrompt = [
-    `Titulo: ${regenerated.title}`,
-    `Mensagem: ${regenerated.textContent.slice(0, 1200)}`,
-    regenerated.slides[0] ? `Pontos visuais: ${regenerated.slides[0].bullets.join("; ")}` : "",
-    "Criativo profissional para LinkedIn, estilo dark mode, sem texto ilegivel e sem logotipos de terceiros.",
-    `Feedback visual do autor: ${feedback}`,
-  ].filter(Boolean).join("\n");
+  const imagePrompt = buildImagePrompt({
+    title: regenerated.title,
+    textContent: regenerated.textContent,
+    editorialPillar: regenerated.editorialPillar,
+    visualBullets: regenerated.slides[0]?.bullets,
+    feedback,
+  });
   const image = await generateCreativeImage(imagePrompt);
   const mediaUrl = await uploadPublicAsset(
     `linkedin-posts/${postId}-${encodeURIComponent(regenerated.title)}.png`,
