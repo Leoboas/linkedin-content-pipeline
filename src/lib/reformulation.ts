@@ -27,7 +27,7 @@ export async function reformulatePostFromFeedback(
 
   const ragContext = current.editorialLineId
     ? await buildRagContext(current.editorialLineId)
-    : { dossier: "", examples: [], systemPrompt: "" };
+    : { dossier: "", examples: [], latestPublished: null, negativeFeedback: [], references: "", systemPrompt: "" };
   const regenerated = await regeneratePostWithFeedback({
     oldTitle: current.title,
     oldText: current.textContent,
@@ -48,6 +48,7 @@ export async function reformulatePostFromFeedback(
     editorialPillar: regenerated.editorialPillar,
     visualBullets: regenerated.slides[0]?.bullets,
     feedback,
+    negativeFeedback: ragContext.negativeFeedback,
   });
   const image = await generateCreativeImage(imagePrompt);
   const mediaUrl = await uploadPublicAsset(
@@ -63,6 +64,7 @@ export async function reformulatePostFromFeedback(
       editorialPillar: regenerated.editorialPillar,
       funnelStage: regenerated.funnelStage,
       formatType: FormatType.SINGLE_IMAGE,
+      imagePrompt,
       slidesJson: regenerated.slides as unknown as object,
       mediaUrl,
       engagementScore: prediction.score,

@@ -7,10 +7,21 @@ export async function publishDuePost(postId: string): Promise<
 > {
   const now = new Date();
   console.info("[linkedin] attempting due post", { postId, now: now.toISOString() });
+  const existing = await prisma.post.findUnique({
+    where: { id: postId },
+    select: { status: true, publishedAt: true },
+  });
+  if (!existing) return { published: false, reason: "post-not-found" };
+  if (existing.status === PostStatus.PUBLISHED || existing.publishedAt !== null) {
+    console.info("[linkedin] duplicate publication prevented", { postId, publishedAt: existing.publishedAt });
+    return { published: false, reason: "already-published" };
+  }
+
   const claimed = await prisma.post.updateMany({
     where: {
       id: postId,
       status: { in: [PostStatus.APPROVED, PostStatus.SCHEDULED] },
+      publishedAt: null,
       scheduledFor: { lte: now },
     },
     data: { status: PostStatus.PUBLISHING },
@@ -21,17 +32,25 @@ export async function publishDuePost(postId: string): Promise<
 
   const post = await prisma.post.findUnique({ where: { id: postId } });
   if (!post) return { published: false, reason: "post-not-found" };
+  if (post.publishedAt !== null || post.status === PostStatus.PUBLISHED) {
+    console.info("[linkedin] duplicate publication prevented after claim", { postId });
+    return { published: false, reason: "already-published" };
+  }
 
   try {
     const published = await publishPostToLinkedIn(post);
-    await prisma.post.update({
-      where: { id: post.id },
+    const finalized = await prisma.post.updateMany({
+      where: { id: post.id, status: PostStatus.PUBLISHING, publishedAt: null },
       data: {
         status: PostStatus.PUBLISHED,
         publishedAt: new Date(),
         linkedinPostId: published.id,
       },
     });
+    if (finalized.count === 0) {
+      console.info("[linkedin] publication finalization skipped; state already changed", { postId: post.id });
+      return { published: false, reason: "already-finalized" };
+    }
     console.info("[linkedin] post published", { postId: post.id, linkedinPostId: published.id });
     return { published: true, id: published.id };
   } catch (error) {

@@ -1,4 +1,4 @@
-import { readFile } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { EditorialPillar } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
@@ -17,6 +17,8 @@ export interface RagContext {
   dossier: string;
   examples: RagExample[];
   latestPublished: PublishedPerformance | null;
+  negativeFeedback: string[];
+  references: string;
   systemPrompt: string;
 }
 
@@ -30,6 +32,12 @@ export interface PublishedPerformance {
   reactions: number;
   comments: number;
   shares: number;
+}
+
+export interface RejectionSignal {
+  pattern: string;
+  occurrenceCount: number;
+  feedback?: string;
 }
 
 async function loadBrandDossier(): Promise<string> {
@@ -97,6 +105,93 @@ async function loadLatestPublishedPerformance(editorialLineId: string): Promise<
   };
 }
 
+async function loadNegativeSignals(editorialLineId: string): Promise<string[]> {
+  const [recentFeedback, patterns] = await Promise.all([
+    prisma.post.findMany({
+      where: {
+        editorialLineId,
+        rejectionFeedback: { not: null },
+        status: { not: "CANCELLED" },
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 3,
+      select: { rejectionFeedback: true },
+    }),
+    prisma.rejectionPattern.findMany({
+      orderBy: [{ occurrenceCount: "desc" }, { lastSeenAt: "desc" }],
+      take: 3,
+      select: { pattern: true, occurrenceCount: true, lastFeedback: true },
+    }),
+  ]);
+
+  const signals = [
+    ...recentFeedback.flatMap((post) => post.rejectionFeedback ? [`Feedback recente: ${post.rejectionFeedback.slice(0, 600)}`] : []),
+    ...patterns.map((pattern) => `Padrao recorrente (${pattern.occurrenceCount}x): ${pattern.pattern}${pattern.lastFeedback ? ` — exemplo: ${pattern.lastFeedback.slice(0, 400)}` : ""}`),
+  ];
+  return [...new Set(signals)];
+}
+
+async function loadFileReferences(): Promise<string> {
+  const directory = join(process.cwd(), "data", "references");
+  let fileContent = "";
+  try {
+    const entries = await readdir(directory, { withFileTypes: true });
+    const files = entries
+      .filter((entry) => entry.isFile() && /\.(md|txt)$/i.test(entry.name))
+      .sort((left, right) => left.name.localeCompare(right.name));
+    const contents = await Promise.all(files.map(async (file) => {
+      const content = await readFile(join(directory, file.name), "utf8");
+      return `--- ${file.name} ---\n${content.trim().slice(0, 5000)}`;
+    }));
+    fileContent = contents.join("\n\n");
+  } catch {
+    fileContent = "Nenhuma referencia local adicional encontrada em data/references.";
+  }
+
+  const databaseReferences = await prisma.contentReference.findMany({
+    orderBy: { createdAt: "desc" },
+    take: 20,
+    select: { content: true, sourceUrl: true, createdAt: true },
+  });
+  const databaseContent = databaseReferences.length > 0
+    ? databaseReferences.map((reference) => [
+        `--- referencia Telegram (${reference.createdAt.toISOString()}) ---`,
+        reference.sourceUrl ? `Fonte: ${reference.sourceUrl}` : "",
+        reference.content.slice(0, 5000),
+      ].filter(Boolean).join("\n")).join("\n\n")
+    : "Nenhuma referencia adicionada pelo Telegram com /ref.";
+  return [fileContent, "===== referencias adicionadas via Telegram =====", databaseContent].join("\n\n");
+}
+
+function rejectionPatternFromFeedback(feedback: string): string {
+  const normalized = feedback.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const categories = [
+    [/imagem|visual|logo|arte|poluid|design/, "melhorar ou simplificar o visual"],
+    [/tom|agressiv|diret|voz|lingu/, "ajustar tom e clareza"],
+    [/gener|cliche|vazi|superfic/, "evitar linguagem generica"],
+    [/metrica|numero|resultado|dado/, "usar evidencia verificavel"],
+    [/texto|post|copy|titulo|gancho/, "fortalecer texto e gancho"],
+  ] as const;
+  const matches = categories.flatMap(([pattern, label]) => pattern.test(normalized) ? [label] : []);
+  return matches.length > 0 ? matches.sort().join("; ") : "feedback especifico: " + normalized.replace(/\s+/g, " ").trim().slice(0, 120);
+}
+
+export async function recordRejectionFeedback(postId: string, feedback: string): Promise<void> {
+  const normalizedFeedback = feedback.trim();
+  if (!normalizedFeedback) return;
+  const current = await prisma.post.findUnique({ where: { id: postId }, select: { rejectionFeedback: true } });
+  if (current?.rejectionFeedback === normalizedFeedback) return;
+  const pattern = rejectionPatternFromFeedback(normalizedFeedback);
+  await prisma.$transaction(async (transaction) => {
+    await transaction.post.update({ where: { id: postId }, data: { rejectionFeedback: normalizedFeedback } });
+    await transaction.rejectionPattern.upsert({
+      where: { pattern },
+      create: { pattern, occurrenceCount: 1, lastFeedback: normalizedFeedback, lastSeenAt: new Date() },
+      update: { occurrenceCount: { increment: 1 }, lastFeedback: normalizedFeedback, lastSeenAt: new Date() },
+    });
+  });
+}
+
 function formatExamples(examples: RagExample[]): string {
   if (examples.length === 0) {
     return "Ainda não há posts publicados com score de engajamento neste histórico. Use o dossier como fonte principal e não invente resultados.";
@@ -127,10 +222,12 @@ function formatLatestPerformance(performance: PublishedPerformance | null): stri
 }
 
 export async function buildRagContext(editorialLineId: string): Promise<RagContext> {
-  const [dossier, groupedExamples, latestPublished] = await Promise.all([
+  const [dossier, groupedExamples, latestPublished, negativeFeedback, references] = await Promise.all([
     loadBrandDossier(),
     Promise.all(pillars.map((pillar) => loadTopPublishedPosts(editorialLineId, pillar))),
     loadLatestPublishedPerformance(editorialLineId),
+    loadNegativeSignals(editorialLineId),
+    loadFileReferences(),
   ]);
   const examples = groupedExamples.flat();
   const systemPrompt = [
@@ -144,9 +241,13 @@ export async function buildRagContext(editorialLineId: string): Promise<RagConte
     formatExamples(examples),
     "\n===== aprendizado do ultimo post publicado =====\n",
     formatLatestPerformance(latestPublished),
+    "\n===== RAG negativo: o que nao fazer =====\n",
+    negativeFeedback.length > 0 ? negativeFeedback.join("\n") : "Ainda nao ha recusas catalogadas. Evite genericidade, texto vazio, metricas inventadas e visuais poluidos.",
+    "\n===== referencias locais =====\n",
+    references,
   ].join("\n");
 
-  return { dossier, examples, latestPublished, systemPrompt };
+  return { dossier, examples, latestPublished, negativeFeedback, references, systemPrompt };
 }
 
 export async function getTopRagPosts(editorialLineId: string, editorialPillar: EditorialPillar): Promise<RagExample[]> {

@@ -3,7 +3,7 @@ import type { Post } from "@prisma/client";
 const TELEGRAM_API = "https://api.telegram.org/bot";
 const pillarOrder: Record<Post["editorialPillar"], number> = { TOFU: 0, MOFU: 1, BOFU: 2 };
 
-type ApprovalPost = Pick<Post, "id" | "title" | "textContent" | "mediaUrl" | "funnelStage" | "formatType" | "scheduledFor" | "scheduledDate" | "editorialPillar" | "engagementScore" | "engagementLabel">;
+export type ApprovalPost = Pick<Post, "id" | "title" | "textContent" | "mediaUrl" | "funnelStage" | "formatType" | "scheduledFor" | "scheduledDate" | "editorialPillar" | "engagementScore" | "engagementLabel" | "status">;
 
 function requireTelegramConfig(): { token: string; chatId: string } {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -71,12 +71,54 @@ export async function sendPostForApproval(post: ApprovalPost): Promise<void> {
   console.info("[telegram] approval card sent", { postId: post.id, messageId: sent?.message_id });
 }
 
+function agendaKeyboard(postId: string): { inline_keyboard: Array<Array<Record<string, string>>> } {
+  return {
+    inline_keyboard: [[
+      { text: "Adiar +1 dia", callback_data: `agenda:delay1:${postId}` },
+      { text: "Adiar +2 dias", callback_data: `agenda:delay2:${postId}` },
+      { text: "Cancelar Post", callback_data: `agenda:cancel:${postId}` },
+    ]],
+  };
+}
+
 export async function sendBatchToTelegram(posts: ApprovalPost[]): Promise<void> {
   const ordered = [...posts].sort((left, right) => pillarOrder[left.editorialPillar] - pillarOrder[right.editorialPillar]);
   for (const [index, post] of ordered.entries()) {
     if (index > 0) await new Promise((resolve) => setTimeout(resolve, 3000));
     await sendPostForApproval(post);
   }
+}
+
+export async function sendAgenda(posts: ApprovalPost[]): Promise<void> {
+  const { chatId } = requireTelegramConfig();
+  if (posts.length === 0) {
+    await telegramRequest("sendMessage", { chat_id: chatId, text: "📅 Nenhum post aprovado ou agendado encontrado." });
+    return;
+  }
+  for (const [index, post] of posts.entries()) {
+    const scheduled = (post.scheduledDate ?? post.scheduledFor).toLocaleString("pt-BR", {
+      timeZone: "America/Sao_Paulo",
+      dateStyle: "short",
+      timeStyle: "short",
+    });
+    await telegramRequest("sendMessage", {
+      chat_id: chatId,
+      text: [
+        `<b>${index + 1}. ${escapeHtml(post.title)}</b>`,
+        `Pilar: ${post.editorialPillar} · Status: ${post.status ?? "AGENDADO"}`,
+        `Programado: ${escapeHtml(scheduled)} (BRT)`,
+        `🔮 Engajamento: ${post.engagementScore === null ? "N/A" : `${Math.round(post.engagementScore)}/100`} (${post.engagementLabel ?? "sem projeção"})`,
+        postMarker(post.id),
+      ].join("\n"),
+      parse_mode: "HTML",
+      reply_markup: agendaKeyboard(post.id),
+    });
+    if (index < posts.length - 1) await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+}
+
+export async function sendTelegramText(chatId: number | string, text: string): Promise<void> {
+  await telegramRequest("sendMessage", { chat_id: chatId, text, parse_mode: "HTML" });
 }
 
 export async function answerCallbackQuery(callbackQueryId: string, text: string): Promise<void> {

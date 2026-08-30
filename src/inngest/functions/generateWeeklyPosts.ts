@@ -89,12 +89,14 @@ async function renderSlidePng(
   return response.arrayBuffer();
 }
 
-async function renderSingleImage(postId: string, title: string, textContent: string, slides: GeneratedSlide[]): Promise<string> {
-  const imagePrompt = buildImagePrompt({
-    title,
-    textContent,
-    visualBullets: slides[0]?.bullets,
-  });
+async function renderSingleImage(
+  postId: string,
+  title: string,
+  textContent: string,
+  slides: GeneratedSlide[],
+  storedPrompt?: string | null,
+): Promise<string> {
+  const imagePrompt = storedPrompt ?? buildImagePrompt({ title, textContent, visualBullets: slides[0]?.bullets });
   const imageBuffer = await generateCreativeImage(imagePrompt);
   return uploadPublicAsset(`linkedin-posts/${postId}-${encodeURIComponent(title)}.png`, imageBuffer, "image/png");
 }
@@ -145,6 +147,13 @@ export const weeklyPostPipeline = inngest.createFunction(
           dossier: ragContext.dossier,
           ragExamples: ragContext.examples,
         });
+        const imagePrompt = buildImagePrompt({
+          title: post.title,
+          textContent: post.textContent,
+          editorialPillar: post.editorialPillar,
+          visualBullets: post.slides[0]?.bullets,
+          negativeFeedback: ragContext.negativeFeedback,
+        });
         const saved = await prisma.post.create({
           data: {
             generationKey,
@@ -154,6 +163,7 @@ export const weeklyPostPipeline = inngest.createFunction(
             formatType: post.formatType,
             title: post.title,
             textContent: post.textContent,
+            imagePrompt,
             slidesJson: post.slides as unknown as Prisma.InputJsonValue,
             engagementScore: prediction.score,
             engagementLabel: prediction.label,
@@ -175,7 +185,7 @@ export const weeklyPostPipeline = inngest.createFunction(
           const slides = slidesFromJson(post.slidesJson);
           const mediaUrl = post.formatType === "CAROUSEL_PDF"
             ? await renderCarouselPdf(post.id, post.title, slides)
-            : await renderSingleImage(post.id, post.title, post.textContent, slides);
+            : await renderSingleImage(post.id, post.title, post.textContent, slides, post.imagePrompt);
           await prisma.post.update({ where: { id: post.id }, data: { mediaUrl } });
         } catch (error) {
           throw new Error(`Renderização do post ${post.id} falhou.`, { cause: error });

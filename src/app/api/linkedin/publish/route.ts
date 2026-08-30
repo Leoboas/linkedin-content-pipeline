@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { PostStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { publishPostToLinkedIn } from "@/lib/linkedin";
+import { publishDuePost } from "@/lib/publishing";
 
 function isAuthorized(request: Request): boolean {
   const secret = process.env.CRON_SECRET;
@@ -21,14 +21,11 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const post = await prisma.post.findUnique({ where: { id: body.postId } });
   if (!post) return NextResponse.json({ error: "Post não encontrado." }, { status: 404 });
-  if (post.status !== PostStatus.APPROVED) {
-    return NextResponse.json({ error: "O post precisa estar aprovado." }, { status: 409 });
+  if (post.status !== PostStatus.APPROVED && post.status !== PostStatus.SCHEDULED) {
+    return NextResponse.json({ error: "O post precisa estar aprovado ou agendado." }, { status: 409 });
   }
 
-  const published = await publishPostToLinkedIn(post);
-  await prisma.post.update({
-    where: { id: post.id },
-    data: { status: PostStatus.PUBLISHED, publishedAt: new Date(), linkedinPostId: published.id },
-  });
-  return NextResponse.json(published);
+  const result = await publishDuePost(post.id);
+  if (!result.published) return NextResponse.json(result, { status: 409 });
+  return NextResponse.json(result);
 }

@@ -37,6 +37,7 @@ enum PostStatus {
   REJECTED_PENDING_FEEDBACK
   REGENERATING
   PUBLISHING
+  CANCELLED
 }
 
 model EditorialLine {
@@ -62,6 +63,7 @@ model Post {
   formatType      FormatType
   title           String
   textContent     String         @db.Text
+  imagePrompt     String?        @db.Text
   slidesJson      Json?
   mediaUrl        String?
   status          PostStatus     @default(PENDING)
@@ -72,6 +74,7 @@ model Post {
   engagementScore Float?
   engagementLabel String?
   feedbackText    String?        @db.Text
+  rejectionFeedback String?      @db.Text
   createdAt       DateTime       @default(now())
   updatedAt       DateTime       @updatedAt
   editorialLine   EditorialLine? @relation(fields: [editorialLineId], references: [id], onDelete: SetNull)
@@ -95,4 +98,27 @@ model PostMetric {
 
   @@index([postId, capturedAt])
   @@index([engagementScore])
+}
+
+model ContentReference {
+  id          String   @id @default(uuid()) @db.Uuid
+  content     String   @db.Text
+  sourceUrl   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([createdAt])
+}
+
+model RejectionPattern {
+  id           String   @id @default(uuid()) @db.Uuid
+  pattern      String   @unique
+  occurrenceCount Int   @default(0)
+  lastFeedback String?  @db.Text
+  lastSeenAt   DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([lastSeenAt])
+  @@index([occurrenceCount])
 }
