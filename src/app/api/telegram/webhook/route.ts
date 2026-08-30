@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { PostStatus } from "@prisma/client";
 import { inngest } from "@/inngest/client";
 import { prisma } from "@/lib/prisma";
-import { scheduledDateForPillar } from "@/lib/scheduling";
+import { nextValidPostingWindow } from "@/lib/scheduler";
 import { requestBatchIfStockIsLow } from "@/lib/stock";
 import {
   answerCallbackQuery,
@@ -89,7 +89,10 @@ async function handleCallback(callback: TelegramCallbackQuery): Promise<NextResp
     return NextResponse.json({ ok: true, alreadyProcessed: true });
   }
 
-  const scheduledDate = scheduledDateForPillar(current.editorialPillar);
+  const existingSchedule = current.scheduledDate ?? current.scheduledFor;
+  const scheduledDate = existingSchedule > new Date()
+    ? existingSchedule
+    : nextValidPostingWindow(new Date(), current.editorialPillar);
   const nextStatus = isReject ? PostStatus.REJECTED_PENDING_FEEDBACK : PostStatus.APPROVED;
   const updated = await prisma.post.updateMany({
     where: { id: postId, status: { in: [PostStatus.AWAITING_APPROVAL, PostStatus.DRAFT] } },

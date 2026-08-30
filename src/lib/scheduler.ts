@@ -9,7 +9,7 @@ function addMilliseconds(date: Date, milliseconds: number): Date {
   return new Date(date.getTime() + milliseconds);
 }
 
-function nextValidPostingWindow(after: Date, pillar: EditorialPillar): Date {
+export function nextValidPostingWindow(after: Date, pillar: EditorialPillar): Date {
   let monday = new Date(Date.UTC(after.getUTCFullYear(), after.getUTCMonth(), after.getUTCDate()));
   const daysSinceMonday = (monday.getUTCDay() + 6) % 7;
   monday.setUTCDate(monday.getUTCDate() - daysSinceMonday);

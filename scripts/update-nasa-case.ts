@@ -58,7 +58,9 @@ try {
     orderBy: { createdAt: "desc" },
   });
   if (!post) throw new Error("Nenhum post BOFU encontrado para atualizar.");
-  const alreadyPresented = post.title === title && post.status === PostStatus.AWAITING_APPROVAL;
+  const alreadyPresented = post.title === title
+    && post.status === PostStatus.AWAITING_APPROVAL
+    && post.scheduledDate?.getTime() === scheduled.getTime();
 
   const updated = await prisma.post.update({
     where: { id: post.id },
