@@ -45,6 +45,23 @@ export function postMarker(postId: string): string {
 
 export async function sendPostForApproval(post: ApprovalPost): Promise<void> {
   const { chatId } = requireTelegramConfig();
+  if (post.mediaUrl) {
+    if (post.mediaUrl.toLowerCase().includes(".pdf")) {
+      await telegramRequest("sendDocument", {
+        chat_id: chatId,
+        document: post.mediaUrl,
+        caption: `<b>Preview do carrossel</b>\n${escapeHtml(post.title)}`,
+        parse_mode: "HTML",
+      });
+    } else {
+      await telegramRequest("sendPhoto", {
+        chat_id: chatId,
+        photo: post.mediaUrl,
+        caption: `<b>Preview visual</b>\n${escapeHtml(post.title)}`,
+        parse_mode: "HTML",
+      });
+    }
+  }
   const mediaLine = post.mediaUrl
     ? `\n\n<b>Preview:</b> <a href="${escapeHtml(post.mediaUrl)}">abrir midia</a>`
     : "";

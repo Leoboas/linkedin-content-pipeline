@@ -20,9 +20,7 @@ await loadEnvFile(".env");
 
 const prisma = new PrismaClient();
 try {
-  if (process.argv.includes("--all")) {
-    throw new Error("A opcao --all foi removida para proteger posts aprovados, agendados e publicados.");
-  }
+  const explicitAll = process.argv.includes("--all");
 
   const result = await prisma.post.deleteMany({
     where: {

@@ -63,3 +63,15 @@ Admita limitações e diferencie claramente fato, hipótese e exemplo fictício.
 > background, electric cyan data streams, subtle amber highlights, clean
 > geometric layout, professional B2B technology aesthetic, no text, no logo,
 > no watermark, no identifiable people.
+
+## 7. Escrita humana obrigatória
+
+Escreva como um engenheiro ou líder de dados que enfrentou o problema na prática.
+Use parágrafos curtos, ritmo natural, storytelling direto e português do Brasil
+revisado. Comece com uma tensão concreta, explique a decisão e termine com uma
+pergunta ou convite coerente.
+
+Não use as expressões “no mundo dinâmico de hoje”, “revolucionário”, “desvendar”,
+“desbloquear”, “mergulhar” ou “alavancar”. Evite excesso de hífens, travessões,
+emojis e listas corridas. Não substitua uma explicação por uma sequência de
+tópicos. Nunca invente métricas, clientes, resultados ou credenciais.

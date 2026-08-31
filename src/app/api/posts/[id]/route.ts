@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { PostStatus } from "@prisma/client";
+import { requestPostRefactor } from "@/lib/content-engine";
 import { isDashboardAuthorized } from "@/lib/dashboard-auth";
 import { prisma } from "@/lib/prisma";
 
@@ -46,11 +47,22 @@ async function updatePost(request: Request, context: RouteContext): Promise<Next
   const id = await postIdFrom(context);
   if (!id) return errorResponse("ID de post inválido.", 400);
 
-  let body: { title?: unknown; textContent?: unknown; imagePrompt?: unknown; scheduledDate?: unknown };
+  let body: { title?: unknown; textContent?: unknown; imagePrompt?: unknown; scheduledDate?: unknown; feedback?: unknown };
   try {
     body = await request.json() as typeof body;
   } catch {
     return errorResponse("Corpo JSON inválido.", 400);
+  }
+
+  if (body.feedback !== undefined) {
+    if (typeof body.feedback !== "string" || body.feedback.trim().length < 5) return errorResponse("feedback inválido.", 400);
+    try {
+      const result = await requestPostRefactor(id, body.feedback, { recordFeedback: false });
+      return jsonResponse({ ...result, status: "REGENERATING" }, 202);
+    } catch (error) {
+      console.error("Falha ao solicitar refatoração pelo dashboard:", error);
+      return errorResponse(error instanceof Error ? error.message : "Falha ao enfileirar refatoração.", 409);
+    }
   }
 
   const data: {
