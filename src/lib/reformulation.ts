@@ -1,6 +1,7 @@
 import { FormatType, PostStatus } from "@prisma/client";
 import { predictEngagement } from "@/lib/analytics";
-import { generateCreativeImage, regeneratePostWithFeedback } from "@/lib/huggingface";
+import { regeneratePostWithFeedback } from "@/lib/huggingface";
+import { generateSingleImageAsset } from "@/lib/creative-renderer";
 import { buildImagePrompt } from "@/lib/image-prompt-engine";
 import { prisma } from "@/lib/prisma";
 import { buildRagContext } from "@/lib/rag";
@@ -49,13 +50,14 @@ export async function reformulatePostFromFeedback(
     visualBullets: regenerated.slides[0]?.bullets,
     feedback,
     negativeFeedback: ragContext.negativeFeedback,
+    referenceInsights: ragContext.references,
   });
-  const image = await generateCreativeImage(imagePrompt);
-  const mediaUrl = await uploadPublicAsset(
-    `linkedin-posts/${postId}-${encodeURIComponent(regenerated.title)}.png`,
-    image,
-    "image/png",
-  );
+  const mediaUrl = await generateSingleImageAsset({
+    postId,
+    title: regenerated.title,
+    editorialPillar: regenerated.editorialPillar,
+    imagePrompt,
+  });
   const updated = await prisma.post.update({
     where: { id: postId },
     data: {
