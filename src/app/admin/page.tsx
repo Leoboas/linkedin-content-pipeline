@@ -4,7 +4,14 @@ import { AdminDashboard, type DashboardPost } from "./AdminDashboard";
 export const dynamic = "force-dynamic";
 
 export default async function AdminPage() {
-  const posts = await prisma.post.findMany({ orderBy: { scheduledFor: "asc" }, take: 200 });
+  const [posts, references] = await Promise.all([
+    prisma.post.findMany({ orderBy: { scheduledFor: "asc" }, take: 200 }),
+    prisma.contentReference.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 30,
+      select: { id: true, content: true, sourceUrl: true, createdAt: true },
+    }),
+  ]);
   const serialized: DashboardPost[] = posts.map((post) => ({
     id: post.id,
     title: post.title,
@@ -18,5 +25,8 @@ export default async function AdminPage() {
     engagementScore: post.engagementScore,
     engagementLabel: post.engagementLabel,
   }));
-  return <AdminDashboard initialPosts={serialized} />;
+  return <AdminDashboard initialPosts={serialized} initialReferences={references.map((reference) => ({
+    ...reference,
+    createdAt: reference.createdAt.toISOString(),
+  }))} />;
 }
