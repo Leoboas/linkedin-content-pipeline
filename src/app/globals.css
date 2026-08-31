@@ -26,6 +26,7 @@ button, input, textarea { font: inherit; }
 .admin-list { display: grid; gap: 12px; }
 .admin-card { border: 1px solid #334155; border-left: 5px solid #64748b; border-radius: 12px; padding: 15px; background: rgba(30, 41, 59, .7); }
 .admin-card.approved { border-left-color: #22c55e; } .admin-card.scheduled { border-left-color: #38bdf8; } .admin-card.draft { border-left-color: #94a3b8; } .admin-card.published { border-left-color: #a855f7; }
+.admin-card.cancelled { border-left-color: #64748b; opacity: .72; }
 .admin-card-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
 .admin-meta { color: #94a3b8; font-size: 13px; margin: 6px 0 12px; }
 .admin-status { border-radius: 999px; padding: 4px 9px; font-size: 11px; white-space: nowrap; background: #334155; }
@@ -34,6 +35,15 @@ button, input, textarea { font: inherit; }
 .admin-media { margin: 14px 0; }
 .admin-media img { display: block; width: min(100%, 420px); max-height: 320px; object-fit: contain; border: 1px solid #475569; border-radius: 10px; background: #020617; }
 .admin-media a { color: #7dd3fc; }
+.admin-expired { color: #fbbf24; background: rgba(120, 53, 15, .3); border: 1px solid #92400e; border-radius: 8px; padding: 8px 10px; margin: 10px 0; font-size: 13px; }
+.admin-label { display: grid; gap: 6px; color: #cbd5e1; font-size: 13px; }
+.admin-toast { position: fixed; z-index: 20; top: 18px; right: 18px; max-width: min(420px, calc(100vw - 36px)); padding: 12px 16px; border-radius: 10px; border: 1px solid #22c55e; background: #052e16; color: #bbf7d0; box-shadow: 0 12px 35px rgba(2, 6, 23, .45); }
+.admin-toast.error { border-color: #ef4444; background: #450a0a; color: #fecaca; }
+.danger-button { border-color: #991b1b; color: #fecaca; }
+.danger-button:hover { border-color: #ef4444; background: #7f1d1d; }
+.admin-modal-backdrop { position: fixed; z-index: 15; inset: 0; display: grid; place-items: center; padding: 18px; background: rgba(2, 6, 23, .78); }
+.admin-modal { width: min(620px, 100%); display: grid; gap: 12px; padding: 22px; border: 1px solid #475569; border-radius: 16px; background: #0f172a; box-shadow: 0 24px 80px rgba(2, 6, 23, .7); }
+.admin-modal h2 { margin: 0; }
 .admin-card.regenerating { border-left-color: #f59e0b; }
 .admin-card.regenerating .admin-status { color: #fbbf24; }
 .ai-button { border-color: #f59e0b; color: #fde68a; }
