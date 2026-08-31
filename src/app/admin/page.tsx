@@ -10,6 +10,7 @@ export default async function AdminPage() {
     title: post.title,
     textContent: post.textContent,
     imagePrompt: post.imagePrompt,
+    mediaUrl: post.mediaUrl,
     editorialPillar: post.editorialPillar,
     status: post.status,
     scheduledFor: post.scheduledFor.toISOString(),

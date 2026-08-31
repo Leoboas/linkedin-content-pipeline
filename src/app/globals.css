@@ -31,4 +31,7 @@ button, input, textarea { font: inherit; }
 .admin-status { border-radius: 999px; padding: 4px 9px; font-size: 11px; white-space: nowrap; background: #334155; }
 .admin-edit { display: grid; gap: 10px; margin-top: 12px; }
 .admin-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.admin-media { margin: 14px 0; }
+.admin-media img { display: block; width: min(100%, 420px); max-height: 320px; object-fit: contain; border: 1px solid #475569; border-radius: 10px; background: #020617; }
+.admin-media a { color: #7dd3fc; }
 @media (max-width: 760px) { .admin-shell { padding: 16px; } .admin-header { display: block; } .admin-grid { grid-template-columns: repeat(7, minmax(150px, 1fr)); } }

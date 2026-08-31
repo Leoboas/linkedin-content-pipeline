@@ -7,6 +7,7 @@ export interface DashboardPost {
   title: string;
   textContent: string;
   imagePrompt: string | null;
+  mediaUrl: string | null;
   editorialPillar: string;
   status: string;
   scheduledFor: string;
@@ -16,7 +17,6 @@ export interface DashboardPost {
 }
 
 type View = "list" | "month" | "week";
-
 const statusClass: Record<string, string> = { APPROVED: "approved", SCHEDULED: "scheduled", DRAFT: "draft", PUBLISHED: "published" };
 const weekdays = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
 
@@ -51,16 +51,22 @@ export function AdminDashboard({ initialPosts }: { initialPosts: DashboardPost[]
 
   async function save(post: DashboardPost, form: HTMLFormElement) {
     const data = new FormData(form);
-    const scheduledDate = String(data.get("scheduledDate") ?? "");
-    const response = await fetch(`/api/posts/${post.id}`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      body: JSON.stringify({ title: data.get("title"), textContent: data.get("textContent"), imagePrompt: data.get("imagePrompt"), scheduledDate: new Date(scheduledDate).toISOString() }),
-    });
-    if (!response.ok) { setMessage(await response.text()); return; }
-    const updated = await response.json() as DashboardPost;
-    setPosts((current) => current.map((item) => item.id === post.id ? { ...item, ...updated, scheduledFor: updated.scheduledFor, scheduledDate: updated.scheduledDate } : item));
-    setEditing(null); setMessage("Alterações salvas.");
+    const scheduledDate = new Date(String(data.get("scheduledDate") ?? ""));
+    if (Number.isNaN(scheduledDate.getTime())) { setMessage("Informe uma data e horário válidos."); return; }
+    try {
+      const response = await fetch(`/api/posts/${post.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ title: data.get("title"), textContent: data.get("textContent"), imagePrompt: data.get("imagePrompt"), scheduledDate: scheduledDate.toISOString() }),
+      });
+      if (!response.ok) {
+        setMessage(response.status === 401 ? "Token inválido ou ausente. Informe o DASHBOARD_ADMIN_TOKEN da Production." : `Não foi possível salvar (${response.status}).`);
+        return;
+      }
+      const updated = await response.json() as DashboardPost;
+      setPosts((current) => current.map((item) => item.id === post.id ? { ...item, ...updated } : item));
+      setEditing(null); setMessage("Alterações salvas.");
+    } catch { setMessage("Falha de rede ao salvar."); }
   }
 
   function eventsFor(day: string): DashboardPost[] { return visiblePosts.filter((post) => dateKey(post.scheduledDate) === day); }
@@ -75,10 +81,11 @@ export function AdminDashboard({ initialPosts }: { initialPosts: DashboardPost[]
       </div>
       {view === "list" && <div className="admin-list">{visiblePosts.map((post) => <article className={`admin-card ${statusClass[post.status] ?? ""}`} key={post.id}>
         <div className="admin-card-head"><div><strong>{post.title}</strong><div className="admin-meta">{post.editorialPillar} · {formatDate(post.scheduledDate)} · {post.engagementScore === null ? "sem score" : `${Math.round(post.engagementScore)}/100 (${post.engagementLabel ?? ""})`}</div></div><span className="admin-status">{post.status}</span></div>
+        {post.mediaUrl && <div className="admin-media">{post.mediaUrl.toLowerCase().includes(".pdf") ? <a href={post.mediaUrl} target="_blank" rel="noreferrer">📄 Abrir PDF do carrossel</a> : <img src={post.mediaUrl} alt={`Criativo de ${post.title}`} loading="lazy" />}</div>}
         {editing === post.id ? <form className="admin-edit" onSubmit={(event) => { event.preventDefault(); void save(post, event.currentTarget); }}><input className="admin-input" name="title" defaultValue={post.title} /><textarea className="admin-textarea" name="textContent" defaultValue={post.textContent} /><textarea className="admin-textarea" name="imagePrompt" placeholder="Prompt da imagem" defaultValue={post.imagePrompt ?? ""} /><input className="admin-input" name="scheduledDate" type="datetime-local" defaultValue={post.scheduledDate.slice(0, 16)} /><div className="admin-actions"><button className="admin-button active" type="submit">Salvar</button><button className="admin-button" type="button" onClick={() => setEditing(null)}>Cancelar</button></div></form> : <div className="admin-actions"><button className="admin-button" onClick={() => setEditing(post.id)}>Editar</button></div>}
       </article>)}</div>}
-      {view === "month" && <><div className="admin-toolbar"><button className="admin-button" onClick={() => setMonth((value) => { const d = new Date(`${value}-01T00:00:00`); d.setMonth(d.getMonth() - 1); return d.toISOString().slice(0, 7); })}>←</button><strong>{month}</strong><button className="admin-button" onClick={() => setMonth((value) => { const d = new Date(`${value}-01T00:00:00`); d.setMonth(d.getMonth() + 1); return d.toISOString().slice(0, 7); })}>→</button></div><div className="admin-grid">{weekdays.map((day) => <div className="admin-weekday" key={day}>{day}</div>)}{monthCells.map((day, index) => { const key = day === null ? `empty-${index}` : `${month}-${String(day).padStart(2, "0")}`; return <div className={`admin-day ${day === null ? "muted" : ""}`} key={key}><div className="admin-day-number">{day ?? ""}</div>{day !== null && eventsFor(key).map((post) => <div className={`admin-event ${statusClass[post.status] ?? ""}`} key={post.id}><strong>{post.editorialPillar} · {post.title}</strong>{post.status} · {formatDate(post.scheduledDate)}</div>)}</div>; })}</div></>}
-      {view === "week" && <div className="admin-list">{Array.from({ length: 7 }, (_, index) => { const day = new Date(weekStart.getTime() + index * 86400000); const key = day.toISOString().slice(0, 10); return <section className="admin-card" key={key}><strong>{day.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "2-digit" })}</strong>{weekPosts.filter((post) => dateKey(post.scheduledDate) === key).map((post) => <div className={`admin-event ${statusClass[post.status] ?? ""}`} key={post.id}><strong>{post.title}</strong>{post.status} · {formatDate(post.scheduledDate)}</div>)}</section>; })}</div>}
+      {view === "month" && <><div className="admin-toolbar"><button className="admin-button" onClick={() => setMonth((value) => { const date = new Date(`${value}-01T00:00:00`); date.setMonth(date.getMonth() - 1); return date.toISOString().slice(0, 7); })}>←</button><strong>{month}</strong><button className="admin-button" onClick={() => setMonth((value) => { const date = new Date(`${value}-01T00:00:00`); date.setMonth(date.getMonth() + 1); return date.toISOString().slice(0, 7); })}>→</button></div><div className="admin-grid">{weekdays.map((day) => <div className="admin-weekday" key={day}>{day}</div>)}{monthCells.map((day, index) => { const key = day === null ? `empty-${index}` : `${month}-${String(day).padStart(2, "0")}`; return <div className={`admin-day ${day === null ? "muted" : ""}`} key={key}><div className="admin-day-number">{day ?? ""}</div>{day !== null && eventsFor(key).map((post) => <div className={`admin-event ${statusClass[post.status] ?? ""}`} key={post.id}><strong>{post.editorialPillar} · {post.title}</strong>{post.status} · {formatDate(post.scheduledDate)}</div>)}</div>; })}</div></>}
+      {view === "week" && <div className="admin-list">{Array.from({ length: 7 }, (_, index) => { const date = new Date(weekStart.getTime() + index * 86400000); const key = date.toISOString().slice(0, 10); return <section className="admin-card" key={key}><strong>{date.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "2-digit" })}</strong>{weekPosts.filter((post) => dateKey(post.scheduledDate) === key).map((post) => <div className={`admin-event ${statusClass[post.status] ?? ""}`} key={post.id}><strong>{post.title}</strong>{post.status} · {formatDate(post.scheduledDate)}</div>)}</section>; })}</div>}
     </section>
   </div></main>;
 }
