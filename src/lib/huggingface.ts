@@ -1,8 +1,9 @@
 import { InferenceClient } from "@huggingface/inference";
 import type { EditorialPillar, FunnelStage, FormatType } from "@prisma/client";
+import { chatCompletionWithFallback } from "@/lib/ai-provider";
+import { assertContentQuality, contentQualityIssues } from "@/lib/content-quality";
 
-const TEXT_MODEL = "Qwen/Qwen2.5-Coder-32B-Instruct";
-const IMAGE_MODEL = "black-forest-labs/FLUX.1-schnell";
+const TEXT_MODEL = "mistralai/Mistral-7B-Instruct-v0.3";
 
 function getHuggingFaceClient(): InferenceClient {
   const token = process.env.HF_TOKEN;
@@ -243,19 +244,20 @@ function ensureVisualMix(posts: GeneratedPost[]): GeneratedPost[] {
   });
 }
 
+function assertBatchQuality(posts: GeneratedPost[]): void {
+  const pillars = posts.map((post) => post.editorialPillar);
+  if (new Set(pillars).size !== 3 || !pillars.includes("TOFU") || !pillars.includes("MOFU") || !pillars.includes("BOFU")) {
+    throw new Error("O lote nao contem exatamente um post de cada pilar editorial.");
+  }
+  for (const post of posts) assertContentQuality(post);
+}
+
 function needsEditorialRefinement(posts: GeneratedPost[]): boolean {
-  const genericLanguage = /vamos explorar|continue com a gente|junte-se a nos|veja como implementamos|vamos olhar para/i;
-  return posts.some((post) => {
-    const content = `${post.title}\n${post.textContent}`;
-    return post.textContent.length < 500
-      || genericLanguage.test(content)
-      || !/[!?]/.test(post.title)
-      || !/(comente|qual|como|conhec|acesse|teste|compartilhe|responda)/i.test(post.textContent);
-  });
+  return posts.some((post) => contentQualityIssues(post).length > 0);
 }
 
 async function refineGeneratedPosts(posts: GeneratedPost[], ragSystemPrompt?: string): Promise<GeneratedPost[]> {
-  const completion = await getHuggingFaceClient().chatCompletion({
+  const completion = await chatCompletionWithFallback({
     model: TEXT_MODEL,
     temperature: 0.55,
     max_tokens: 6000,
@@ -284,14 +286,72 @@ async function refineGeneratedPosts(posts: GeneratedPost[], ragSystemPrompt?: st
   });
   const content = completion.choices[0]?.message.content;
   if (!content) throw new Error("A Hugging Face retornou uma resposta vazia na revisao editorial.");
-  return ensureVisualMix(parseGeneratedPosts(parseModelJson(content)));
+  const refined = ensureVisualMix(parseGeneratedPosts(parseModelJson(content)));
+  assertBatchQuality(refined);
+  return refined;
+}
+
+async function repairSinglePost(input: {
+  draft: GeneratedPost;
+  feedback: string;
+  editorialPillar: EditorialPillar;
+  funnelStage: FunnelStage;
+  formatType: FormatType;
+  issues: string[];
+  ragSystemPrompt?: string;
+}): Promise<GeneratedPost> {
+  const completion = await chatCompletionWithFallback({
+    model: TEXT_MODEL,
+    temperature: 0.35,
+    max_tokens: 3000,
+    response_format: { type: "json_object" },
+    messages: [
+      {
+        role: "system",
+        content: [
+          input.ragSystemPrompt,
+          "Voce e um editor senior de LinkedIn em portugues do Brasil e esta executando uma ultima revisao de qualidade.",
+          "Corrija todos os problemas listados sem perder os fatos, o pilar editorial, o contexto tecnico ou o feedback do autor.",
+          "Entregue entre 500 e 1400 caracteres, em 4 a 7 paragrafos curtos, com gancho forte nas duas primeiras linhas e CTA conversacional no final.",
+          "Nao repita o titulo no inicio do texto. Nao invente metricas, clientes, resultados ou credenciais.",
+          "Nunca use no mundo dinamico de hoje, revolucionario, desvendar, desbloquear, mergulhar, alavancar, junte-se a nos ou game changer.",
+          "Mantenha exatamente o pilar editorial e a etapa recebidos. Retorne somente JSON valido no formato {post:{funnelStage,editorialPillar,formatType,title,textContent,slides}}.",
+        ].filter(Boolean).join(" "),
+      },
+      {
+        role: "user",
+        content: JSON.stringify({
+          draft: input.draft,
+          authorFeedback: input.feedback,
+          qualityFailures: input.issues,
+          lockedTaxonomy: {
+            editorialPillar: input.editorialPillar,
+            funnelStage: input.funnelStage,
+            formatType: input.formatType,
+          },
+        }),
+      },
+    ],
+  });
+  const content = completion.choices[0]?.message.content;
+  if (!content) throw new Error("A Hugging Face retornou uma resposta vazia no reparo editorial.");
+  const parsed = parseModelJson(content) as { post?: unknown };
+  const candidate = parseSingleGeneratedPost(parsed.post ?? parsed, 0);
+  const repaired = ensureVisualMix([{
+    ...candidate,
+    editorialPillar: input.editorialPillar,
+    funnelStage: input.funnelStage,
+    formatType: input.formatType,
+  }])[0];
+  assertContentQuality(repaired, { expectedPillar: input.editorialPillar });
+  return repaired;
 }
 
 export async function generateWeeklyPosts(
   context: EditorialContext,
   options: { ragSystemPrompt?: string } = {},
 ): Promise<GeneratedPost[]> {
-  const completion = await getHuggingFaceClient().chatCompletion({
+  const completion = await chatCompletionWithFallback({
     model: TEXT_MODEL,
     temperature: 0.75,
     max_tokens: 6000,
@@ -331,27 +391,16 @@ export async function generateWeeklyPosts(
   const content = completion.choices[0]?.message.content;
   if (!content) throw new Error("A Hugging Face retornou uma resposta vazia.");
   try {
-    const parsed = ensureVisualMix(parseGeneratedPosts(parseModelJson(content)));
-    if (!needsEditorialRefinement(parsed)) return parsed;
-    try {
-      return await refineGeneratedPosts(parsed, options.ragSystemPrompt);
-    } catch (refinementError) {
-      console.warn("Revisao editorial automatica indisponivel; usando o primeiro rascunho:", refinementError);
-      return parsed;
-    }
+     const parsed = ensureVisualMix(parseGeneratedPosts(parseModelJson(content)));
+     if (!needsEditorialRefinement(parsed)) {
+       assertBatchQuality(parsed);
+       return parsed;
+     }
+     return await refineGeneratedPosts(parsed, options.ragSystemPrompt);
   } catch (error) {
     if (error instanceof SyntaxError) throw new Error("Não foi possível interpretar o JSON retornado pela Hugging Face.", { cause: error });
     throw error;
   }
-}
-
-export async function generateCreativeImage(prompt: string): Promise<Buffer> {
-  const image = await getHuggingFaceClient().textToImage({
-    model: IMAGE_MODEL,
-    inputs: prompt,
-    parameters: { width: 1024, height: 1024, num_inference_steps: 4 },
-  }, { outputType: "blob" });
-  return Buffer.from(await image.arrayBuffer());
 }
 
 export async function regeneratePostWithFeedback(input: {
@@ -359,9 +408,11 @@ export async function regeneratePostWithFeedback(input: {
   oldText: string;
   feedback: string;
   editorialPillar: EditorialPillar;
+  funnelStage?: FunnelStage;
+  formatType?: FormatType;
   ragSystemPrompt?: string;
 }): Promise<GeneratedPost> {
-  const completion = await getHuggingFaceClient().chatCompletion({
+  const completion = await chatCompletionWithFallback({
     model: TEXT_MODEL,
     temperature: 0.75,
     max_tokens: 3000,
@@ -396,7 +447,25 @@ export async function regeneratePostWithFeedback(input: {
   if (!content) throw new Error("A Hugging Face retornou uma resposta vazia na reformulacao.");
   try {
     const parsed = parseModelJson(content) as { post?: unknown };
-    return parseSingleGeneratedPost(parsed.post ?? parsed, 0);
+    const candidate = parseSingleGeneratedPost(parsed.post ?? parsed, 0);
+    const locked = {
+      ...candidate,
+      editorialPillar: input.editorialPillar,
+      funnelStage: input.funnelStage ?? candidate.funnelStage,
+      formatType: input.formatType ?? candidate.formatType,
+    };
+    const normalized = ensureVisualMix([locked])[0];
+    const issues = contentQualityIssues(normalized, { expectedPillar: input.editorialPillar });
+    if (issues.length === 0) return normalized;
+    return repairSinglePost({
+      draft: normalized,
+      feedback: input.feedback,
+      editorialPillar: input.editorialPillar,
+      funnelStage: input.funnelStage ?? normalized.funnelStage,
+      formatType: input.formatType ?? normalized.formatType,
+      issues,
+      ragSystemPrompt: input.ragSystemPrompt,
+    });
   } catch (error) {
     if (error instanceof SyntaxError) {
       throw new Error("Nao foi possivel interpretar o JSON da reformulacao.", { cause: error });
@@ -405,4 +474,4 @@ export async function regeneratePostWithFeedback(input: {
   }
 }
 
-export const huggingFaceModels = { text: TEXT_MODEL, image: IMAGE_MODEL } as const;
+export const huggingFaceModels = { text: TEXT_MODEL, image: "satori-or-unsplash" } as const;

@@ -1,4 +1,5 @@
 import type { EditorialPillar } from "@prisma/client";
+import { getAppUrl } from "@/lib/app-url";
 
 const palette = ["#0F172A", "#0EA5E9", "#F59E0B"] as const;
 
@@ -63,6 +64,20 @@ export const imagePromptPalette = palette;
 
 export function wantsRealPhotography(prompt: string): boolean {
   return /fotograf|photograph|photo-real|photoreal|realistic studio|foto real/i.test(prompt);
+}
+
+/**
+ * Zero-inference fallback. The endpoint uses @vercel/og/Satori to compose a
+ * deterministic card, so it does not consume Hugging Face credits.
+ */
+export async function generateImageZeroCost(topic: string, pillar: string): Promise<Buffer> {
+  const params = new URLSearchParams({ title: topic.slice(0, 95), pillar: pillar.slice(0, 40) });
+  const response = await fetch(`${getAppUrl()}/api/og/creative?${params.toString()}`, {
+    cache: "no-store",
+    signal: AbortSignal.timeout(20_000),
+  });
+  if (!response.ok) throw new Error(`Fallback Satori retornou ${response.status}.`);
+  return Buffer.from(await response.arrayBuffer());
 }
 
 export async function fetchStockImageUrl(query: string): Promise<string | null> {

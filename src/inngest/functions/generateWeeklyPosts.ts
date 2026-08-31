@@ -1,6 +1,7 @@
 import { PDFDocument } from "pdf-lib";
 import { Prisma, PostStatus } from "@prisma/client";
 import { inngest } from "@/inngest/client";
+import { isAiCapacityError } from "@/lib/ai-provider";
 import { getAppUrl } from "@/lib/app-url";
 import { generateNewPostBatch, refactorPostWithFeedback } from "@/lib/content-engine";
 import { generateSingleImageAsset } from "@/lib/creative-renderer";
@@ -12,7 +13,7 @@ import { reconcileOverduePosts } from "@/lib/scheduler";
 import { pillarOrder } from "@/lib/scheduling";
 import { requestBatchIfStockIsLow } from "@/lib/stock";
 import { uploadPublicAsset } from "@/lib/storage";
-import { sendBatchToTelegram, sendFeedbackRetryPrompt, sendPostForApproval } from "@/lib/telegram";
+import { sendBatchToTelegram, sendFeedbackRetryPrompt, sendHuggingFaceQuotaAlert, sendPostForApproval } from "@/lib/telegram";
 
 interface WeeklyEventData {
   triggeredAt?: string;
@@ -142,6 +143,16 @@ export const reformulatePostWithFeedback = inngest.createFunction(
       });
       return { postId: data.postId, status: PostStatus.DRAFT, sent: true };
     } catch (error) {
+      if (isAiCapacityError(error)) {
+        await prisma.post.updateMany({
+          where: { id: data.postId, status: { in: [PostStatus.REGENERATING, PostStatus.DRAFT] } },
+          data: { status: PostStatus.REJECTED_PENDING_FEEDBACK },
+        });
+        try { await sendHuggingFaceQuotaAlert(data.postId); }
+        catch (notificationError) { console.error("Falha ao enviar alerta de cota da IA:", notificationError); }
+        console.error(`ReformulaÃ§Ã£o bloqueada por capacidade do provedor para ${data.postId}:`, error);
+        return { postId: data.postId, status: PostStatus.REJECTED_PENDING_FEEDBACK, quotaBlocked: true };
+      }
       await prisma.post.updateMany({ where: { id: data.postId, status: { in: [PostStatus.REGENERATING, PostStatus.DRAFT] } }, data: { status: PostStatus.REJECTED_PENDING_FEEDBACK } });
       try { await sendFeedbackRetryPrompt(data.postId); } catch (notificationError) { console.error("Falha ao enviar retry do feedback:", notificationError); }
       console.error(`Reformulação do post ${data.postId} falhou:`, error);

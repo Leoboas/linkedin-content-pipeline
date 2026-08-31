@@ -204,3 +204,17 @@ export async function sendFeedbackRetryPrompt(postId: string): Promise<void> {
     reply_markup: { force_reply: true, selective: true, input_field_placeholder: "Tente novamente" },
   });
 }
+
+export async function sendHuggingFaceQuotaAlert(postId: string): Promise<void> {
+  const { chatId } = requireTelegramConfig();
+  await telegramRequest("sendMessage", {
+    chat_id: chatId,
+    text: [
+      "<b>⚠️ Alerta de Sistema</b>",
+      "A cota da Hugging Face esgotou. O seu feedback foi salvo.",
+      "O post será gerado usando o provedor de fallback ou aguardará novos créditos.",
+      postMarker(postId),
+    ].join("\n\n"),
+    parse_mode: "HTML",
+  });
+}

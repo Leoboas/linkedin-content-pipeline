@@ -117,6 +117,8 @@ export async function refactorPostWithFeedback(
     oldText: current.textContent,
     feedback,
     editorialPillar: current.editorialPillar,
+    funnelStage: current.funnelStage,
+    formatType: FormatType.SINGLE_IMAGE,
     ragSystemPrompt: humanPrompt(ragContext.systemPrompt),
   });
   const prediction = predictEngagement({

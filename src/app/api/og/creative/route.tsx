@@ -16,14 +16,15 @@ function isRemoteUrl(value: string): boolean {
   }
 }
 
-const thirtyTwo = 32;
+// At 58px, roughly 25 characters fit safely inside the 900px text column.
+const maxTitleCharacters = 25;
 
 function titleLines(value: string): string[] {
   const words = value.split(/\s+/).filter(Boolean);
   const lines: string[] = [];
   let line = "";
   for (const word of words) {
-    if (line && `${line} ${word}`.length >  thirtyTwo) {
+    if (line && `${line} ${word}`.length > maxTitleCharacters) {
       lines.push(line);
       line = word;
     } else {
@@ -47,20 +48,21 @@ export function GET(request: Request): ImageResponse {
 
   return new ImageResponse(
     <div style={{ display: "flex", width: "100%", height: "100%", position: "relative", background: "#0F172A", color: "#F8FAFC", fontFamily: "Arial" }}>
-      {background ? <img src={background} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover" }} /> : null}
-      <div style={{ position: "absolute", inset: 0, display: "flex", background: "linear-gradient(180deg, rgba(15,23,42,.12) 0%, rgba(15,23,42,.84) 68%, rgba(15,23,42,.98) 100%)" }} />
+      {background ? <img src={background} style={{ position: "absolute", inset: 0, width: "100%", height: "100%", objectFit: "cover", opacity: 0.28 }} /> : null}
+      <div style={{ position: "absolute", inset: 0, display: "flex", background: "linear-gradient(180deg, rgba(15,23,42,.9) 0%, rgba(15,23,42,.72) 42%, rgba(15,23,42,.98) 100%)" }} />
+      <div style={{ position: "absolute", left: 48, right: 48, top: 120, bottom: 140, display: "flex", borderRadius: 28, border: "2px solid rgba(125,211,252,.24)", background: "rgba(15,23,42,.96)" }} />
       <div style={{ position: "absolute", inset: 0, display: "flex", flexDirection: "column", justifyContent: "space-between", padding: "66px 72px" }}>
         <div style={{ display: "flex", justifyContent: "space-between", color: "#7DD3FC", fontSize: 25, letterSpacing: 2 }}>
           <span>{pillar}</span><span>LINKEDIN INSIGHT</span>
         </div>
-        <div style={{ display: "flex", flexDirection: "column", maxWidth: 900, gap: 28 }}>
+        <div style={{ display: "flex", flexDirection: "column", maxWidth: 900, gap: 24, padding: "38px 40px" }}>
           <div style={{ display: "flex", color: "#F59E0B", fontSize: 24, letterSpacing: 3 }}>DECISÃO TÉCNICA</div>
-          <div style={{ display: "flex", flexDirection: "column", fontSize: 62, lineHeight: 1.08, fontWeight: 700 }}>
+          <div style={{ display: "flex", flexDirection: "column", fontSize: 58, lineHeight: 1.08, fontWeight: 700 }}>
             {lines.map((line, index) => <span key={`${line}-${index}`}>{line}</span>)}
           </div>
           <div style={{ display: "flex", width: 130, height: 7, borderRadius: 8, background: "#0EA5E9" }} />
         </div>
-        <div style={{ display: "flex", justifyContent: "space-between", color: "#CBD5E1", fontSize: 22 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, color: "#CBD5E1", fontSize: 22 }}>
           <span>Autonomous LinkedIn Content Engine</span><span>feito para compartilhar</span>
         </div>
       </div>
