@@ -5,6 +5,7 @@ import { analyzeManualJob } from "@/lib/career-engine";
 import { auditLinkedInProfile } from "@/lib/profile-auditor";
 import { prisma } from "@/lib/prisma";
 import { nextValidPostingWindow } from "@/lib/scheduler";
+import { formatDateInBrazil } from "@/lib/dates";
 import { requestBatchIfStockIsLow } from "@/lib/stock";
 import {
   answerCallbackQuery, editTelegramMessage, postMarker, sendAgenda,
@@ -61,7 +62,7 @@ async function handleAgendaCallback(callback: TelegramCallbackQuery, match: RegE
   const days = action === "delay2" ? 2 : 1;
   const scheduledDate = new Date((current.scheduledDate ?? current.scheduledFor).getTime() + days * 86400000);
   await prisma.post.updateMany({ where: { id: postId, status: { in: [PostStatus.APPROVED, PostStatus.SCHEDULED] } }, data: { scheduledFor: scheduledDate, scheduledDate, status: PostStatus.SCHEDULED } });
-  if (chatId !== undefined && messageId !== undefined) await editTelegramMessage(chatId, messageId, `<b>📅 Post reagendado +${days} dia(s).</b>\nNovo horário: ${scheduledDate.toISOString()}`, { inline_keyboard: [] });
+  if (chatId !== undefined && messageId !== undefined) await editTelegramMessage(chatId, messageId, `<b>📅 Post reagendado +${days} dia(s).</b>\nNovo horário (BRT): ${formatDateInBrazil(scheduledDate)}`, { inline_keyboard: [] });
   return NextResponse.json({ ok: true, scheduledDate });
 }
 
@@ -136,7 +137,7 @@ async function handleCallback(callback: TelegramCallbackQuery): Promise<NextResp
   if (chatId !== undefined && messageId !== undefined) {
     const confirmation = isReject
       ? `<b>❌ Post recusado.</b>\n\nResponda à mensagem de feedback para reformular texto e imagem.\n\n${postMarker(postId)}`
-      : `<b>✅ Post aprovado!</b> Agendado para ${scheduledDate.toISOString()}`;
+      : `<b>✅ Post aprovado!</b> Agendado para ${formatDateInBrazil(scheduledDate)} (BRT)`;
     await editTelegramMessage(chatId, messageId, confirmation, { inline_keyboard: [] });
     if (isReject) await sendFeedbackPrompt(chatId, messageId, postId);
   }

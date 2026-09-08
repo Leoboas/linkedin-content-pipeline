@@ -3,6 +3,7 @@ import { PostStatus } from "@prisma/client";
 import { requestPostRefactor } from "@/lib/content-engine";
 import { isDashboardAuthorized } from "@/lib/dashboard-auth";
 import { prisma } from "@/lib/prisma";
+import { parseDateTimeLocalInBrazil } from "@/lib/dates";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -86,7 +87,9 @@ async function updatePost(request: Request, context: RouteContext): Promise<Next
   }
   if (body.scheduledDate !== undefined) {
     if (typeof body.scheduledDate !== "string") return errorResponse("scheduledDate inválido.", 400);
-    const scheduledDate = new Date(body.scheduledDate);
+    const scheduledDate = body.scheduledDate.includes("T") && !/[zZ]|[+-]\d{2}:?\d{2}$/.test(body.scheduledDate)
+      ? parseDateTimeLocalInBrazil(body.scheduledDate)
+      : new Date(body.scheduledDate);
     if (Number.isNaN(scheduledDate.getTime())) return errorResponse("scheduledDate inválido.", 400);
     data.scheduledDate = scheduledDate;
     data.scheduledFor = scheduledDate;

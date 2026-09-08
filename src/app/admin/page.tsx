@@ -1,7 +1,12 @@
 import { prisma } from "@/lib/prisma";
+import { formatDateTimeLocalInBrazil } from "@/lib/dates";
 import { AdminDashboard, type DashboardPost } from "./AdminDashboard";
 
 export const dynamic = "force-dynamic";
+
+function serializeBrazilDate(date: Date): string {
+  return `${formatDateTimeLocalInBrazil(date)}:00-03:00`;
+}
 
 export default async function AdminPage() {
   const [posts, references] = await Promise.all([
@@ -20,8 +25,8 @@ export default async function AdminPage() {
     mediaUrl: post.mediaUrl,
     editorialPillar: post.editorialPillar,
     status: post.status,
-    scheduledFor: post.scheduledFor.toISOString(),
-    scheduledDate: (post.scheduledDate ?? post.scheduledFor).toISOString(),
+    scheduledFor: serializeBrazilDate(post.scheduledFor),
+    scheduledDate: serializeBrazilDate(post.scheduledDate ?? post.scheduledFor),
     engagementScore: post.engagementScore,
     engagementLabel: post.engagementLabel,
   }));

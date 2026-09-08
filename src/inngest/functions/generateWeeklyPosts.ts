@@ -109,7 +109,7 @@ export const publishApprovedPost = inngest.createFunction(
       return prisma.post.findUnique({ where: { id: data.postId } });
     });
     if (!post || (post.status !== PostStatus.APPROVED && post.status !== PostStatus.SCHEDULED)) return { skipped: true, reason: "post-not-approved" };
-    const scheduledFor = new Date(post.scheduledFor);
+    const scheduledFor = new Date(post.scheduledDate ?? post.scheduledFor);
     if (Number.isNaN(scheduledFor.getTime())) throw new Error(`scheduledFor inválido para o post ${post.id}.`);
     if (scheduledFor > new Date()) {
       await prisma.post.updateMany({ where: { id: post.id, status: PostStatus.APPROVED }, data: { status: PostStatus.SCHEDULED } });

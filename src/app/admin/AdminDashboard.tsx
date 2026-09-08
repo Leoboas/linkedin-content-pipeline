@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { dateKeyInBrazil, formatDateInBrazil, formatDateTimeLocalInBrazil, parseDateTimeLocalInBrazil } from "@/lib/dates";
 
 export interface DashboardPost {
   id: string;
@@ -28,15 +29,15 @@ type Toast = { text: string; kind: "success" | "error" };
 
 const statusClass: Record<string, string> = {
   APPROVED: "approved", SCHEDULED: "scheduled", DRAFT: "draft", PUBLISHED: "published",
-  REGENERATING: "regenerating", CANCELLED: "cancelled",
+  REGENERATING: "regenerating", PUBLISHING: "publishing", CANCELLED: "cancelled",
 };
 const visibleStatuses = new Set([
-  "APPROVED", "SCHEDULED", "DRAFT", "PUBLISHED", "AWAITING_APPROVAL", "REGENERATING", "CANCELLED",
+  "APPROVED", "SCHEDULED", "DRAFT", "PUBLISHED", "AWAITING_APPROVAL", "REGENERATING", "PUBLISHING", "CANCELLED",
 ]);
 const weekdays = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
 
-function dateKey(value: string): string { return value.slice(0, 10); }
-function formatDate(value: string): string { return new Date(value).toLocaleString("pt-BR", { dateStyle: "short", timeStyle: "short" }); }
+function dateKey(value: string): string { return dateKeyInBrazil(new Date(value)); }
+function formatDate(value: string): string { return formatDateInBrazil(new Date(value)); }
 function isExpired(post: DashboardPost): boolean {
   return !["PUBLISHED", "CANCELLED", "REGENERATING"].includes(post.status)
     && new Date(post.scheduledDate).getTime() < Date.now();
@@ -56,7 +57,8 @@ export function AdminDashboard({
   const [aiPost, setAiPost] = useState<DashboardPost | null>(null);
   const [aiFeedback, setAiFeedback] = useState("");
   const [token, setToken] = useState("");
-  const [month, setMonth] = useState(() => new Date().toISOString().slice(0, 7));
+  const [month, setMonth] = useState(() => formatDateTimeLocalInBrazil(new Date()).slice(0, 7));
+  const [publishing, setPublishing] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
 
   const visiblePosts = useMemo(() => posts.filter((post) => visibleStatuses.has(post.status)), [posts]);
@@ -67,9 +69,10 @@ export function AdminDashboard({
     return Array.from({ length: offset + days }, (_, index) => index < offset ? null : index - offset + 1);
   }, [month]);
   const weekStart = useMemo(() => {
-    const date = new Date();
-    date.setHours(0, 0, 0, 0);
-    date.setDate(date.getDate() - ((date.getDay() + 6) % 7));
+    const today = formatDateTimeLocalInBrazil(new Date()).slice(0, 10);
+    const date = parseDateTimeLocalInBrazil(`${today}T00:00`);
+    const weekday = new Date(`${today}T12:00:00Z`).getUTCDay();
+    date.setUTCDate(date.getUTCDate() - ((weekday + 6) % 7));
     return date;
   }, []);
   const weekPosts = visiblePosts.filter((post) => {
@@ -88,7 +91,9 @@ export function AdminDashboard({
 
   async function save(post: DashboardPost, form: HTMLFormElement) {
     const data = new FormData(form);
-    const scheduledDate = new Date(String(data.get("scheduledDate") ?? ""));
+    let scheduledDate: Date;
+    try { scheduledDate = parseDateTimeLocalInBrazil(String(data.get("scheduledDate") ?? "")); }
+    catch { notify("Informe uma data e horário válidos.", "error"); return; }
     if (Number.isNaN(scheduledDate.getTime())) { notify("Informe uma data e horário válidos.", "error"); return; }
     try {
       const response = await fetch(`/api/posts/${post.id}`, {
@@ -160,6 +165,26 @@ export function AdminDashboard({
     } catch { notify("Falha de rede ao cancelar o post.", "error"); }
   }
 
+  async function publishNow(post: DashboardPost) {
+    if (!isExpired(post) || !["APPROVED", "SCHEDULED"].includes(post.status)) return;
+    setPublishing(post.id);
+    try {
+      const response = await fetch("/api/linkedin/publish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ postId: post.id }),
+      });
+      const payload = await response.json().catch(() => null) as { error?: string; reason?: string } | null;
+      if (!response.ok) {
+        notify(payload?.error ?? payload?.reason ?? `Não foi possível publicar (${response.status}).`, "error");
+        return;
+      }
+      setPosts((current) => current.map((item) => item.id === post.id ? { ...item, status: "PUBLISHED" } : item));
+      notify("Post publicado no LinkedIn.");
+    } catch { notify("Falha de rede ao publicar o post.", "error"); }
+    finally { setPublishing(null); }
+  }
+
   async function addReference(form: HTMLFormElement) {
     const data = new FormData(form);
     const sourceUrl = String(data.get("sourceUrl") ?? "").trim();
@@ -201,7 +226,7 @@ export function AdminDashboard({
         {isExpired(post) && <div className="admin-expired">⚠️ Data expirada — reagende ou cancele este post.</div>}
         {post.mediaUrl && <div className="admin-media">{post.mediaUrl.toLowerCase().includes(".pdf") ? <a href={post.mediaUrl} target="_blank" rel="noreferrer">📄 Abrir PDF do carrossel</a> : <img src={post.mediaUrl} alt={`Criativo de ${post.title}`} loading="lazy" />}</div>}
         {editing === post.id ? <form className="admin-edit" onSubmit={(event) => { event.preventDefault(); void save(post, event.currentTarget); }}><input className="admin-input" name="title" defaultValue={post.title} /><textarea className="admin-textarea" name="textContent" defaultValue={post.textContent} /><textarea className="admin-textarea" name="imagePrompt" placeholder="Prompt da imagem" defaultValue={post.imagePrompt ?? ""} /><label className="admin-label">Data e hora de publicação (reagendamento)<input className="admin-input" name="scheduledDate" type="datetime-local" defaultValue={post.scheduledDate.slice(0, 16)} /></label><div className="admin-actions"><button className="admin-button active" type="submit">Salvar alterações</button><button className="admin-button" type="button" onClick={() => setEditing(null)}>Cancelar edição</button></div></form> : <div className="admin-actions">{post.status !== "PUBLISHED" && post.status !== "CANCELLED" && <><button className="admin-button" disabled={post.status === "REGENERATING"} onClick={() => setEditing(post.id)}>{isExpired(post) ? "Reagendar" : "Editar"}</button><button className="admin-button ai-button" disabled={post.status === "REGENERATING"} onClick={() => { setAiPost(post); setAiFeedback(""); }}>{post.status === "REGENERATING" ? "IA processando…" : "✨ Solicitar alteração por IA"}</button><button className="admin-button danger-button" disabled={post.status === "REGENERATING"} onClick={() => void cancelPost(post)}>Cancelar post</button></>}</div>}
-      </article>)}</div>}
+      {isExpired(post) && ["APPROVED", "SCHEDULED"].includes(post.status) && <div className="admin-actions"><button className="admin-button publish-button" disabled={publishing === post.id} onClick={() => void publishNow(post)}>{publishing === post.id ? "Publicando…" : "🚀 Publicar agora"}</button></div>}</article>)}</div>}
       {view === "month" && <><div className="admin-toolbar"><button className="admin-button" onClick={() => setMonth((value) => { const date = new Date(`${value}-01T00:00:00`); date.setMonth(date.getMonth() - 1); return date.toISOString().slice(0, 7); })}>←</button><strong>{month}</strong><button className="admin-button" onClick={() => setMonth((value) => { const date = new Date(`${value}-01T00:00:00`); date.setMonth(date.getMonth() + 1); return date.toISOString().slice(0, 7); })}>→</button></div><div className="admin-grid">{weekdays.map((day) => <div className="admin-weekday" key={day}>{day}</div>)}{monthCells.map((day, index) => { const key = day === null ? `empty-${index}` : `${month}-${String(day).padStart(2, "0")}`; return <div className={`admin-day ${day === null ? "muted" : ""}`} key={key}><div className="admin-day-number">{day ?? ""}</div>{day !== null && eventsFor(key).map((post) => <div className={`admin-event ${statusClass[post.status] ?? ""}`} key={post.id}><strong>{post.editorialPillar} · {post.title}</strong>{post.status} · {formatDate(post.scheduledDate)}</div>)}</div>; })}</div></>}
       {view === "week" && <div className="admin-list">{Array.from({ length: 7 }, (_, index) => { const date = new Date(weekStart.getTime() + index * 86400000); const key = date.toISOString().slice(0, 10); return <section className="admin-card" key={key}><strong>{date.toLocaleDateString("pt-BR", { weekday: "long", day: "2-digit", month: "2-digit" })}</strong>{weekPosts.filter((post) => dateKey(post.scheduledDate) === key).map((post) => <div className={`admin-event ${statusClass[post.status] ?? ""}`} key={post.id}><strong>{post.title}</strong>{post.status} · {formatDate(post.scheduledDate)}</div>)}</section>; })}</div>}
     </section>

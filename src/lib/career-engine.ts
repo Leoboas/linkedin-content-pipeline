@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { JobListingStatus, JobSource, Prisma, SearchRunStatus } from "@prisma/client";
 import { SEARCH_LOCATIONS, TARGET_JOB_TITLES } from "../../config/job-targets";
 import { prisma } from "@/lib/prisma";
@@ -35,7 +37,22 @@ function text(value: unknown): string | undefined {
 
 function profileJson(): { name: string; headline: string; about: string; skills: string[]; targetTitles: string[]; location?: string; linkedinUrl?: string } {
   const raw = process.env.CAREER_PROFILE_JSON;
-  if (!raw) throw new Error("CAREER_PROFILE_JSON não configurado. Cadastre o perfil no Dashboard /career ou na Vercel.");
+  if (!raw?.trim()) {
+    try {
+      const dossier = readFileSync(join(process.cwd(), "data", "brand-dossier.md"), "utf8");
+      const knownSkills = ["TypeScript", "Python", "Next.js", "PostgreSQL", "AWS", "Airflow", "Docker", "Data Lake", "Machine Learning", "IA"];
+      const skills = knownSkills.filter((skill) => dossier.toLocaleLowerCase("pt-BR").includes(skill.toLocaleLowerCase("pt-BR")));
+      return {
+        name: "Perfil de demonstração",
+        headline: "Engenharia de Dados | Arquitetura | Automação",
+        about: dossier.slice(0, 3_000),
+        skills: skills.length > 0 ? skills : ["Python", "SQL", "Cloud"],
+        targetTitles: [...TARGET_JOB_TITLES],
+      };
+    } catch (error) {
+      throw new Error(`Perfil não encontrado no ENV, DB ou data/brand-dossier.md: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch { throw new Error("CAREER_PROFILE_JSON não contém JSON válido."); }
   if (!parsed || typeof parsed !== "object") throw new Error("CAREER_PROFILE_JSON inválido.");
@@ -55,6 +72,21 @@ function profileJson(): { name: string; headline: string; about: string; skills:
 
 async function getOrCreateProfile() {
   const existing = await prisma.candidateProfile.findFirst({ orderBy: { createdAt: "asc" } });
+  if (existing && process.env.CAREER_PROFILE_JSON && existing.name.toLocaleLowerCase("pt-BR").includes("demonstra")) {
+    const seed = profileJson();
+    return prisma.candidateProfile.update({
+      where: { id: existing.id },
+      data: {
+        name: seed.name,
+        headline: seed.headline,
+        about: seed.about,
+        location: seed.location,
+        linkedinUrl: seed.linkedinUrl,
+        skills: seed.skills,
+        targetTitles: seed.targetTitles,
+      },
+    });
+  }
   if (existing) return existing;
   const seed = profileJson();
   return prisma.candidateProfile.create({

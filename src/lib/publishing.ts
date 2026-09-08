@@ -22,7 +22,7 @@ export async function publishDuePost(postId: string): Promise<
       id: postId,
       status: { in: [PostStatus.APPROVED, PostStatus.SCHEDULED] },
       publishedAt: null,
-      scheduledFor: { lte: now },
+      OR: [{ scheduledFor: { lte: now } }, { scheduledDate: { lte: now } }],
     },
     data: { status: PostStatus.PUBLISHING },
   });

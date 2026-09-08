@@ -1,4 +1,5 @@
 import type { Post } from "@prisma/client";
+import { formatDateInBrazil } from "@/lib/dates";
 
 const TELEGRAM_API = "https://api.telegram.org/bot";
 const pillarOrder: Record<Post["editorialPillar"], number> = { TOFU: 0, MOFU: 1, BOFU: 2 };
@@ -70,7 +71,7 @@ export async function sendPostForApproval(post: ApprovalPost): Promise<void> {
     "<b>Novo post aguardando aprovacao</b>",
     `<b>${escapeHtml(post.title)}</b>`,
     `Pilar: ${post.editorialPillar} · Etapa: ${post.funnelStage} · Formato: ${post.formatType}`,
-    `Agendado: ${escapeHtml((post.scheduledDate ?? post.scheduledFor).toISOString())}`,
+    `Agendado (BRT): ${escapeHtml(formatDateInBrazil(post.scheduledDate ?? post.scheduledFor))}`,
     `🔮 Projeção de Engajamento: ${projection} (${post.engagementLabel ?? "Sem projecao"})`,
     "",
     escapeHtml(post.textContent.slice(0, 3200)),
@@ -113,11 +114,7 @@ export async function sendAgenda(posts: ApprovalPost[]): Promise<void> {
     return;
   }
   for (const [index, post] of posts.entries()) {
-    const scheduled = (post.scheduledDate ?? post.scheduledFor).toLocaleString("pt-BR", {
-      timeZone: "America/Sao_Paulo",
-      dateStyle: "short",
-      timeStyle: "short",
-    });
+    const scheduled = formatDateInBrazil(post.scheduledDate ?? post.scheduledFor);
     await telegramRequest("sendMessage", {
       chat_id: chatId,
       text: [

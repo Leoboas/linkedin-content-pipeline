@@ -2,8 +2,10 @@ import { NextResponse } from "next/server";
 import { PostStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { publishDuePost } from "@/lib/publishing";
+import { isDashboardAuthorized } from "@/lib/dashboard-auth";
 
 function isAuthorized(request: Request): boolean {
+  if (isDashboardAuthorized(request)) return true;
   const secret = process.env.CRON_SECRET;
   if (!secret) return process.env.NODE_ENV !== "production";
   return request.headers.get("authorization") === `Bearer ${secret}`;
