@@ -2,12 +2,13 @@ import { NextResponse } from "next/server";
 import { PostStatus } from "@prisma/client";
 import { requestPostPublication, requestPostRefactor } from "@/lib/content-engine";
 import { analyzeManualJob } from "@/lib/career-engine";
+import { auditLinkedInProfile } from "@/lib/profile-auditor";
 import { prisma } from "@/lib/prisma";
 import { nextValidPostingWindow } from "@/lib/scheduler";
 import { requestBatchIfStockIsLow } from "@/lib/stock";
 import {
   answerCallbackQuery, editTelegramMessage, postMarker, sendAgenda,
-  sendCareerJobAnalysis, sendCareerJobPrompt, sendFeedbackPrompt, sendFeedbackQueued, sendTelegramText,
+  sendCareerJobAnalysis, sendCareerJobPrompt, sendFeedbackPrompt, sendFeedbackQueued, sendProfileAudit, sendTelegramText,
 } from "@/lib/telegram";
 
 interface TelegramMessage {
@@ -68,6 +69,20 @@ async function handleMessageCommand(message: TelegramMessage): Promise<NextRespo
   const text = message.text?.trim();
   const chatId = chatIdOf(message);
   if (!text || chatId === undefined) return null;
+  if (isCommand(text, "audit")) {
+    console.log("[Telegram Webhook] Executando /audit...");
+    try {
+      const report = await auditLinkedInProfile();
+      await sendProfileAudit(chatId, report);
+      console.log("[Telegram Webhook] /audit concluido.", { score: report.score });
+      return NextResponse.json({ ok: true, command: "audit", score: report.score });
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.error("[Telegram Webhook] /audit falhou:", error);
+      await sendTelegramText(chatId, `⚠️ <b>Falha na auditoria do perfil.</b>\nCausa: ${reason.replaceAll("<", "&lt;").replaceAll(">", "&gt;")}`);
+      return NextResponse.json({ ok: false, command: "audit", error: reason }, { status: 502 });
+    }
+  }
   if (isCommand(text, "agenda")) {
     const posts = await prisma.post.findMany({ where: { status: { in: [PostStatus.APPROVED, PostStatus.SCHEDULED] } }, orderBy: { scheduledFor: "asc" }, take: 5 });
     await sendAgenda(posts);

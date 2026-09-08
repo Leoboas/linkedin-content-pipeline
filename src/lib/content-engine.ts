@@ -1,9 +1,9 @@
 import { Prisma, FormatType, PostStatus } from "@prisma/client";
 import { inngest } from "@/inngest/client";
 import { predictEngagement } from "@/lib/analytics";
-import { generateWeeklyPosts as generateWithHuggingFace, regeneratePostWithFeedback, type GeneratedSlide } from "@/lib/huggingface";
+import { generateWeeklyPosts as generateWithHuggingFace, regeneratePostWithFeedback, type GeneratedPost, type GeneratedSlide } from "@/lib/huggingface";
 import { buildImagePrompt } from "@/lib/image-prompt-engine";
-import { generateSingleImageAsset } from "@/lib/creative-renderer";
+import { generateImageWithFallback } from "@/lib/creative-renderer";
 import { prisma } from "@/lib/prisma";
 import { buildRagContext, recordRejectionFeedback } from "@/lib/rag";
 import { getNextPipelineBaseDate, pillarOrder, scheduledDateForPost } from "@/lib/scheduling";
@@ -99,6 +99,7 @@ export async function refactorPostWithFeedback(
   userFeedback: string,
   options: { sendTelegram?: boolean } = {},
 ): Promise<void> {
+  console.info("[content-engine] starting post refactor", { postId });
   const current = await prisma.post.findUnique({ where: { id: postId } });
   if (!current) throw new Error("Post associado ao feedback não encontrado.");
   const reformulableStatuses = new Set<PostStatus>([
@@ -112,15 +113,24 @@ export async function refactorPostWithFeedback(
   const ragContext = current.editorialLineId
     ? await buildRagContext(current.editorialLineId)
     : { dossier: "", examples: [], latestPublished: null, negativeFeedback: [], references: "", systemPrompt: "" };
-  const regenerated = await regeneratePostWithFeedback({
-    oldTitle: current.title,
-    oldText: current.textContent,
-    feedback,
-    editorialPillar: current.editorialPillar,
-    funnelStage: current.funnelStage,
-    formatType: FormatType.SINGLE_IMAGE,
-    ragSystemPrompt: humanPrompt(ragContext.systemPrompt),
-  });
+  let regenerated: GeneratedPost;
+  try {
+    regenerated = await regeneratePostWithFeedback({
+      oldTitle: current.title,
+      oldText: current.textContent,
+      feedback,
+      editorialPillar: current.editorialPillar,
+      funnelStage: current.funnelStage,
+      formatType: FormatType.SINGLE_IMAGE,
+      ragSystemPrompt: humanPrompt(ragContext.systemPrompt),
+    });
+  } catch (error) {
+    console.error("[content-engine] text refactor failed", {
+      postId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
   const prediction = predictEngagement({
     title: regenerated.title,
     textContent: regenerated.textContent,
@@ -137,12 +147,21 @@ export async function refactorPostWithFeedback(
     negativeFeedback: ragContext.negativeFeedback,
     referenceInsights: ragContext.references,
   });
-  const mediaUrl = await generateSingleImageAsset({
-    postId,
-    title: regenerated.title,
-    editorialPillar: regenerated.editorialPillar,
-    imagePrompt,
-  });
+  let mediaUrl: string;
+  try {
+    mediaUrl = await generateImageWithFallback({
+      postId,
+      title: regenerated.title,
+      editorialPillar: regenerated.editorialPillar,
+      imagePrompt,
+    });
+  } catch (error) {
+    console.error("[content-engine] image refactor failed", {
+      postId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
   const updated = await prisma.post.update({
     where: { id: postId },
     data: {
@@ -164,6 +183,7 @@ export async function refactorPostWithFeedback(
     const { sendPostForApproval } = await import("@/lib/telegram");
     await sendPostForApproval(updated);
   }
+  console.info("[content-engine] post refactor completed", { postId, mediaUrl: Boolean(mediaUrl) });
 }
 
 const queueableStatuses = new Set<PostStatus>([

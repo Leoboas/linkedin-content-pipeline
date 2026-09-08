@@ -1,6 +1,6 @@
 import { InferenceClient } from "@huggingface/inference";
 import type { EditorialPillar, FunnelStage, FormatType } from "@prisma/client";
-import { chatCompletionWithFallback } from "@/lib/ai-provider";
+import { generateTextWithFallback } from "@/lib/ai-provider";
 import { assertContentQuality, contentQualityIssues } from "@/lib/content-quality";
 
 const TEXT_MODEL = "mistralai/Mistral-7B-Instruct-v0.3";
@@ -257,7 +257,7 @@ function needsEditorialRefinement(posts: GeneratedPost[]): boolean {
 }
 
 async function refineGeneratedPosts(posts: GeneratedPost[], ragSystemPrompt?: string): Promise<GeneratedPost[]> {
-  const completion = await chatCompletionWithFallback({
+  const completion = await generateTextWithFallback({
     model: TEXT_MODEL,
     temperature: 0.55,
     max_tokens: 6000,
@@ -300,7 +300,7 @@ async function repairSinglePost(input: {
   issues: string[];
   ragSystemPrompt?: string;
 }): Promise<GeneratedPost> {
-  const completion = await chatCompletionWithFallback({
+  const completion = await generateTextWithFallback({
     model: TEXT_MODEL,
     temperature: 0.35,
     max_tokens: 3000,
@@ -351,7 +351,7 @@ export async function generateWeeklyPosts(
   context: EditorialContext,
   options: { ragSystemPrompt?: string } = {},
 ): Promise<GeneratedPost[]> {
-  const completion = await chatCompletionWithFallback({
+  const completion = await generateTextWithFallback({
     model: TEXT_MODEL,
     temperature: 0.75,
     max_tokens: 6000,
@@ -412,7 +412,7 @@ export async function regeneratePostWithFeedback(input: {
   formatType?: FormatType;
   ragSystemPrompt?: string;
 }): Promise<GeneratedPost> {
-  const completion = await chatCompletionWithFallback({
+  const completion = await generateTextWithFallback({
     model: TEXT_MODEL,
     temperature: 0.75,
     max_tokens: 3000,

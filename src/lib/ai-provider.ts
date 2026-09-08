@@ -90,3 +90,8 @@ export async function chatCompletionWithFallback(request: ChatRequest): Promise<
     throw new Error(`Hugging Face indisponivel e fallbacks de texto falharam: ${fallbackErrors.join(" | ")}`, { cause: error });
   }
 }
+
+/** Canonical text-generation entry point used by content refactoring and generation flows. */
+export async function generateTextWithFallback(request: ChatRequest): Promise<ChatResponse> {
+  return chatCompletionWithFallback(request);
+}

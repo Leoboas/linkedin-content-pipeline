@@ -138,6 +138,38 @@ export async function sendTelegramText(chatId: number | string, text: string): P
   await telegramRequest("sendMessage", { chat_id: chatId, text, parse_mode: "HTML" });
 }
 
+export async function sendProfileAudit(chatId: number | string, report: {
+  score: number;
+  suggestedHeadlines: string[];
+  seoKeywords: string[];
+  aboutRewrite: string;
+  recommendations: string[];
+  strengths: string[];
+  jobHistoryCount: number;
+}): Promise<void> {
+  const lines = [
+    "<b>Auditoria do perfil LinkedIn</b>",
+    `Nota geral: <b>${Math.round(report.score)}/100</b>`,
+    `Histórico de vagas analisadas: ${report.jobHistoryCount}`,
+    "",
+    "<b>Headlines sugeridas</b>",
+    ...report.suggestedHeadlines.map((item) => `• ${escapeHtml(item)}`),
+    "",
+    `<b>Palavras-chave SEO</b>\n${escapeHtml(report.seoKeywords.join(", ") || "Nenhuma identificada.")}`,
+    "",
+    `<b>Reescrita da seção Sobre</b>\n${escapeHtml(report.aboutRewrite)}`,
+    "",
+    "<b>Recomendações</b>",
+    ...report.recommendations.map((item) => `• ${escapeHtml(item)}`),
+  ];
+  await telegramRequest("sendMessage", {
+    chat_id: chatId,
+    text: lines.join("\n").slice(0, 3900),
+    parse_mode: "HTML",
+    disable_web_page_preview: true,
+  });
+}
+
 export async function answerCallbackQuery(callbackQueryId: string, text: string): Promise<void> {
   await telegramRequest("answerCallbackQuery", {
     callback_query_id: callbackQueryId,

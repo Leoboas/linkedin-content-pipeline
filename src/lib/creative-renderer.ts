@@ -8,6 +8,8 @@ interface SingleImageInput {
   editorialPillar?: string;
   imagePrompt: string;
 }
+
+export type ImageAssetInput = SingleImageInput;
 /**
  * Images are generated without an inference call. Unsplash is used when
  * configured; otherwise @vercel/og/Satori creates a deterministic card.
@@ -43,4 +45,23 @@ export async function generateSingleImageAsset(input: SingleImageInput): Promise
   if (!response.ok) throw new Error(`Falha ao compor texto deterministico do criativo: ${response.status}`);
   const finalImage = new Uint8Array(await response.arrayBuffer());
   return uploadPublicAsset(`linkedin-posts/${input.postId}-${safeName}-final.png`, finalImage, "image/png");
+}
+
+/**
+ * Image boundary used by the content engine. The primary path may use a stock
+ * photo or Satori; the second attempt always uses the deterministic zero-cost
+ * renderer so a transient remote image failure does not lose the post.
+ */
+export async function generateImageWithFallback(input: SingleImageInput): Promise<string> {
+  try {
+    return await generateSingleImageAsset(input);
+  } catch (error) {
+    console.error("[creative-renderer] primary image generation failed; using zero-cost fallback", {
+      postId: input.postId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    const card = await generateImageZeroCost(input.title, input.editorialPillar ?? "TECH · DATA · GROWTH");
+    const safeName = encodeURIComponent(input.title).slice(0, 120);
+    return uploadPublicAsset(`linkedin-posts/${input.postId}-${safeName}-fallback.png`, card, "image/png");
+  }
 }
