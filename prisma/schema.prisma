@@ -40,6 +40,24 @@ enum PostStatus {
   CANCELLED
 }
 
+enum JobListingStatus {
+  OPEN
+  CLOSED
+  UNKNOWN
+}
+
+enum JobSource {
+  LINKEDIN
+  AUTHORIZED_FEED
+  MANUAL
+}
+
+enum SearchRunStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
 model EditorialLine {
   id          String   @id @default(uuid()) @db.Uuid
   name        String
@@ -121,4 +139,113 @@ model RejectionPattern {
 
   @@index([lastSeenAt])
   @@index([occurrenceCount])
+}
+
+model CandidateProfile {
+  id             String   @id @default(uuid()) @db.Uuid
+  name           String
+  headline       String   @db.Text
+  about          String   @db.Text
+  location       String?
+  linkedinUrl    String?
+  skills         Json
+  experience     Json?
+  education      Json?
+  targetTitles   Json
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  documents      CareerDocument[]
+  matches        JobMatch[]
+  seoAudits      LinkedInSeoAudit[]
+}
+
+model CareerDocument {
+  id          String   @id @default(uuid()) @db.Uuid
+  profileId   String   @db.Uuid
+  title       String
+  content     String   @db.Text
+  sourceUrl   String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  profile     CandidateProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId, createdAt])
+}
+
+model JobListing {
+  id                 String            @id @default(uuid()) @db.Uuid
+  source             JobSource
+  externalId         String
+  title              String
+  company            String?
+  location           String?
+  remote             Boolean           @default(false)
+  url                String
+  description        String            @db.Text
+  sourcePublishedAt  DateTime?
+  discoveredAt       DateTime          @default(now())
+  status             JobListingStatus  @default(OPEN)
+  rawData            Json?
+  matches            JobMatch[]
+
+  @@unique([source, externalId])
+  @@index([status, discoveredAt])
+  @@index([title, location])
+}
+
+model JobMatch {
+  id              String          @id @default(uuid()) @db.Uuid
+  profileId       String          @db.Uuid
+  jobId           String          @db.Uuid
+  score           Float
+  label           String
+  matchedSkills   Json
+  skillGaps       Json
+  rationale       String          @db.Text
+  ragContext      String?         @db.Text
+  createdAt       DateTime        @default(now())
+  profile         CandidateProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  job             JobListing      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, jobId])
+  @@index([profileId, score])
+}
+
+model LinkedInSeoAudit {
+  id              String          @id @default(uuid()) @db.Uuid
+  profileId       String          @db.Uuid
+  score           Float
+  strengths       Json
+  recommendations Json
+  snapshot        Json
+  createdAt       DateTime        @default(now())
+  profile         CandidateProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@index([profileId, createdAt])
+}
+
+model SkillRadar {
+  id             String   @id @default(uuid()) @db.Uuid
+  skill          String
+  category       String
+  demandCount    Int      @default(0)
+  candidateLevel Float?
+  gapScore       Float    @default(0)
+  evidence       Json?
+  updatedAt      DateTime @updatedAt
+
+  @@unique([skill, category])
+  @@index([gapScore])
+}
+
+model CareerSearchRun {
+  id           String          @id @default(uuid()) @db.Uuid
+  status       SearchRunStatus @default(RUNNING)
+  queryCount   Int             @default(0)
+  resultCount  Int             @default(0)
+  errorMessage String?         @db.Text
+  startedAt    DateTime        @default(now())
+  completedAt  DateTime?
+
+  @@index([status, startedAt])
 }

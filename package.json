@@ -14,6 +14,7 @@
     "queue:reconcile": "node --experimental-strip-types scripts/reconcile-queue.ts",
     "case:nasa": "node --experimental-strip-types scripts/update-nasa-case.ts",
     "queue:reset": "node --experimental-strip-types scripts/reset-queue.ts",
+    "career:scan": "node scripts/career-scan.mjs",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push"
   },

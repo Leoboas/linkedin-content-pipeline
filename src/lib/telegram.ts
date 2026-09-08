@@ -218,3 +218,21 @@ export async function sendHuggingFaceQuotaAlert(postId: string): Promise<void> {
     parse_mode: "HTML",
   });
 }
+
+export async function sendCareerDigest(result: {
+  matches: Array<{ title: string; company: string | null; location: string | null; url: string; score: number; label: string; skillGaps: string[] }>;
+  queries: number;
+  discovered: number;
+  message: string;
+}): Promise<void> {
+  const { chatId } = requireTelegramConfig();
+  const lines = [
+    "<b>Radar de carreira atualizado</b>",
+    escapeHtml(result.message),
+    `Consultas: ${result.queries} · Vagas encontradas: ${result.discovered}`,
+  ];
+  for (const match of result.matches.slice(0, 8)) {
+    lines.push("", `<b>${escapeHtml(match.title)}</b>`, `${escapeHtml(match.company ?? "Empresa não informada")} · ${escapeHtml(match.location ?? "Local não informado")}`, `Match: ${Math.round(match.score)}/100 (${escapeHtml(match.label)})`, match.skillGaps.length ? `Gaps: ${escapeHtml(match.skillGaps.join(", "))}` : "Gaps: nenhum detectado", `<a href="${escapeHtml(match.url)}">Abrir vaga</a>`);
+  }
+  await telegramRequest("sendMessage", { chat_id: chatId, text: lines.join("\n"), parse_mode: "HTML", disable_web_page_preview: true });
+}

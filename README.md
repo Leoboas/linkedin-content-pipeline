@@ -17,6 +17,11 @@ flowchart LR
   Telegram --> Webhook[Telegram webhook]
   Webhook --> Inngest
   Inngest --> LinkedIn[LinkedIn API v2]
+  CronCareer[Vercel Cron dias uteis] --> Career[Job Hunter & Career Engine]
+  Career --> Jobs[Feed JSON autorizado]
+  Career --> Match[RAG lexical + gaps + Skill Radar]
+  Match --> CareerTelegram[Telegram digest]
+  Career --> CareerDashboard[/career]
 ```
 
 ## Stack
