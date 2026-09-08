@@ -8,6 +8,7 @@ function authorized(request: Request): boolean {
 
 export async function GET(request: Request): Promise<NextResponse> {
   if (!authorized(request)) return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
+  await inngest.send({ name: "career/search-links.requested", data: { triggeredAt: new Date().toISOString() } });
   await inngest.send({ name: "career/scan.requested", data: { triggeredAt: new Date().toISOString() } });
-  return NextResponse.json({ accepted: true, event: "career/scan.requested" });
+  return NextResponse.json({ accepted: true, events: ["career/search-links.requested", "career/scan.requested"] });
 }

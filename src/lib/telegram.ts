@@ -13,7 +13,7 @@ function requireTelegramConfig(): { token: string; chatId: string } {
 }
 
 function escapeHtml(value: string): string {
-  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;").replaceAll("'", "&#39;");
 }
 
 async function telegramRequest<T>(method: string, body: Record<string, unknown>): Promise<T> {
@@ -235,4 +235,45 @@ export async function sendCareerDigest(result: {
     lines.push("", `<b>${escapeHtml(match.title)}</b>`, `${escapeHtml(match.company ?? "Empresa não informada")} · ${escapeHtml(match.location ?? "Local não informado")}`, `Match: ${Math.round(match.score)}/100 (${escapeHtml(match.label)})`, match.skillGaps.length ? `Gaps: ${escapeHtml(match.skillGaps.join(", "))}` : "Gaps: nenhum detectado", `<a href="${escapeHtml(match.url)}">Abrir vaga</a>`);
   }
   await telegramRequest("sendMessage", { chat_id: chatId, text: lines.join("\n"), parse_mode: "HTML", disable_web_page_preview: true });
+}
+
+export async function sendCareerSearchLinks(queries: Array<{ title: string; location: string; url: string }>): Promise<void> {
+  const { chatId } = requireTelegramConfig();
+  const titles = new Map<string, string>();
+  for (const query of queries) if (!titles.has(query.title)) titles.set(query.title, query.url);
+  const ordered = [...titles.entries()];
+  const lines = [
+    "<b>🎯 Radar Diário de Carreiras - Links de Busca</b>",
+    "",
+    "Escolha um cargo para abrir as vagas mais recentes no LinkedIn:",
+    ...ordered.map(([title], index) => `${index + 1}. ${title}`),
+    "",
+    "💡 <i>Encontrou uma vaga interessante? Compartilhe ou use /vaga &lt;URL&gt; aqui no chat para gerar a análise de Match, Gaps e o Pitch do Recrutador.</i>",
+  ];
+  const inline_keyboard = ordered.map(([title, url]) => [{ text: `🔎 ${title}`, url }]);
+  await telegramRequest("sendMessage", { chat_id: chatId, text: lines.join("\n"), parse_mode: "HTML", disable_web_page_preview: true, reply_markup: { inline_keyboard } });
+}
+
+export function jobMarker(jobId: string): string {
+  return `<code>vaga:${jobId}</code>`;
+}
+
+export async function sendCareerJobPrompt(chatId: number | string, jobId: string, url: string): Promise<void> {
+  await telegramRequest("sendMessage", {
+    chat_id: chatId,
+    text: ["<b>🔎 Vaga recebida.</b>", "Responda a esta mensagem colando a descrição da vaga. Não faço scraping do LinkedIn; uso o conteúdo fornecido para calcular Match, Gaps e Pitch.", `<a href="${escapeHtml(url)}">Abrir vaga</a>`, jobMarker(jobId)].join("\n\n"),
+    parse_mode: "HTML",
+    disable_web_page_preview: true,
+    reply_markup: { force_reply: true, selective: true, input_field_placeholder: "Cole a descrição da vaga" },
+  });
+}
+
+export async function sendCareerJobAnalysis(chatId: number | string, analysis: { title: string; score: number; label: string; matchedSkills: string[]; skillGaps: string[]; rationale: string; pitch: string; jobUrl: string }, replyToMessageId?: number): Promise<void> {
+  await telegramRequest("sendMessage", {
+    chat_id: chatId,
+    ...(replyToMessageId ? { reply_to_message_id: replyToMessageId } : {}),
+    text: ["<b>📌 Análise da vaga</b>", `<b>${escapeHtml(analysis.title)}</b>`, `Match: <b>${Math.round(analysis.score)}/100</b> (${escapeHtml(analysis.label)})`, `✅ Aderências: ${escapeHtml(analysis.matchedSkills.join(", ") || "nenhuma identificada")}`, `⚠️ Gaps: ${escapeHtml(analysis.skillGaps.join(", ") || "nenhum evidente")}`, escapeHtml(analysis.rationale), "<b>Pitch sugerido</b>", escapeHtml(analysis.pitch), `<a href="${escapeHtml(analysis.jobUrl)}">Abrir vaga</a>`].join("\n\n"),
+    parse_mode: "HTML",
+    disable_web_page_preview: true,
+  });
 }

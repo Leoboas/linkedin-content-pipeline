@@ -154,6 +154,23 @@ export async function getCareerDashboardData() {
   return { profile, matches, radar, audit };
 }
 
+export async function analyzeManualJob(jobId: string, description: string) {
+  const job = await prisma.jobListing.findUnique({ where: { id: jobId } });
+  if (!job || job.source !== JobSource.MANUAL) throw new Error("Vaga manual não encontrada.");
+  const profile = await getOrCreateProfile();
+  const documents = await prisma.careerDocument.findMany({ where: { profileId: profile.id }, select: { title: true, content: true } });
+  const context = buildCareerContext({ profile, documents });
+  const result = calculateMatch({ profileSkills: asStringArray(profile.skills), profileContext: context, jobTitle: job.title, jobDescription: description });
+  await prisma.jobListing.update({ where: { id: job.id }, data: { description, status: JobListingStatus.OPEN } });
+  await prisma.jobMatch.upsert({
+    where: { profileId_jobId: { profileId: profile.id, jobId: job.id } },
+    update: { score: result.score, label: result.label, matchedSkills: result.matchedSkills, skillGaps: result.skillGaps, rationale: result.rationale, ragContext: context.slice(0, 10000) },
+    create: { profileId: profile.id, jobId: job.id, score: result.score, label: result.label, matchedSkills: result.matchedSkills, skillGaps: result.skillGaps, rationale: result.rationale, ragContext: context.slice(0, 10000) },
+  });
+  const pitch = `Olá! Sou ${profile.name}, ${profile.headline}. Tenho experiência prática em ${result.matchedSkills.slice(0, 5).join(", ") || "engenharia e resolução de problemas"}. Gostaria de conversar sobre como posso contribuir para esta posição.`;
+  return { ...result, title: job.title, jobUrl: job.url, pitch };
+}
+
 export async function auditLinkedInProfile() {
   const profile = await getOrCreateProfile();
   const skills = asStringArray(profile.skills);

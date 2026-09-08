@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { PostStatus } from "@prisma/client";
 import { requestPostPublication, requestPostRefactor } from "@/lib/content-engine";
+import { analyzeManualJob } from "@/lib/career-engine";
 import { prisma } from "@/lib/prisma";
 import { nextValidPostingWindow } from "@/lib/scheduler";
 import { requestBatchIfStockIsLow } from "@/lib/stock";
 import {
   answerCallbackQuery, editTelegramMessage, postMarker, sendAgenda,
-  sendFeedbackPrompt, sendFeedbackQueued, sendTelegramText,
+  sendCareerJobAnalysis, sendCareerJobPrompt, sendFeedbackPrompt, sendFeedbackQueued, sendTelegramText,
 } from "@/lib/telegram";
 
 interface TelegramMessage {
@@ -32,6 +33,10 @@ async function acknowledgeCallback(callbackId: string, text: string): Promise<vo
 
 function extractPostId(text: string | undefined): string | undefined {
   return text?.match(/post:([0-9a-f-]{36})/i)?.[1];
+}
+
+function extractJobId(text: string | undefined): string | undefined {
+  return text?.match(/vaga:([0-9a-f-]{36})/i)?.[1];
 }
 
 function chatIdOf(message: TelegramMessage | undefined): number | string | undefined { return message?.chat?.id; }
@@ -74,6 +79,16 @@ async function handleMessageCommand(message: TelegramMessage): Promise<NextRespo
     const saved = await prisma.contentReference.create({ data: { content: reference, sourceUrl } });
     await sendTelegramText(chatId, `✅ Referência salva no repertório RAG.\nID: <code>${saved.id}</code>`);
     return NextResponse.json({ ok: true, command: "ref", referenceId: saved.id });
+  }
+  const jobUrl = text.match(/^\/vaga(?:@\w+)?\s+(https?:\/\/\S+)$/i)?.[1];
+  if (jobUrl) {
+    const job = await prisma.jobListing.upsert({
+      where: { source_externalId: { source: "MANUAL", externalId: jobUrl } },
+      update: { url: jobUrl },
+      create: { source: "MANUAL", externalId: jobUrl, title: "Vaga compartilhada pelo Telegram", url: jobUrl, description: "Aguardando descrição fornecida pelo usuário." },
+    });
+    await sendCareerJobPrompt(chatId, job.id, jobUrl);
+    return NextResponse.json({ ok: true, command: "vaga", jobId: job.id });
   }
   return null;
 }
@@ -134,8 +149,20 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (commandResponse) return commandResponse;
   const feedback = message?.text?.trim();
   const reply = message?.reply_to_message;
-  const postId = extractPostId(reply?.text ?? reply?.caption);
+  const jobId = extractJobId(reply?.text ?? reply?.caption);
   const replyMessageId = reply?.message_id;
+  if (feedback && jobId && updateChatId !== undefined) {
+    try {
+      const analysis = await analyzeManualJob(jobId, feedback);
+      await sendCareerJobAnalysis(updateChatId, analysis, replyMessageId);
+      return NextResponse.json({ ok: true, careerJobAnalyzed: true, jobId });
+    } catch (error) {
+      console.error("Falha ao analisar vaga recebida pelo Telegram:", error);
+      await sendTelegramText(updateChatId, "⚠️ Não consegui analisar esta vaga. Verifique se o perfil profissional foi salvo em /career e tente novamente com a descrição completa.");
+      return NextResponse.json({ error: "Falha ao analisar vaga." }, { status: 502 });
+    }
+  }
+  const postId = extractPostId(reply?.text ?? reply?.caption);
   if (!feedback || !postId) return NextResponse.json({ ok: true });
   const existingPost = await prisma.post.findUnique({ where: { id: postId } });
   if (!existingPost) return NextResponse.json({ ok: true, postNotFound: true });
