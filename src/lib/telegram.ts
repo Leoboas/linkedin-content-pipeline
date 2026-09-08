@@ -143,11 +143,19 @@ export async function sendProfileAudit(chatId: number | string, report: {
   recommendations: string[];
   strengths: string[];
   jobHistoryCount: number;
+  gaps?: string[];
+  recruiterVerdict?: string;
+  marketPositioning?: string;
+  roleFit?: Array<{ role: string; fitScore: number; reason: string }>;
 }): Promise<void> {
   const lines = [
     "<b>Auditoria do perfil LinkedIn</b>",
     `Nota geral: <b>${Math.round(report.score)}/100</b>`,
     `Histórico de vagas analisadas: ${report.jobHistoryCount}`,
+    ...(report.recruiterVerdict ? ["", `<b>Veredito de recrutadora/ATS</b>\n${escapeHtml(report.recruiterVerdict)}`] : []),
+    ...(report.marketPositioning ? [`<b>Posicionamento de mercado</b>\n${escapeHtml(report.marketPositioning)}`] : []),
+    ...(report.roleFit?.length ? ["", "<b>Aderência por cargo-alvo</b>", ...report.roleFit.slice(0, 6).map((item) => `• ${escapeHtml(item.role)}: ${Math.round(item.fitScore)}/100 — ${escapeHtml(item.reason)}`)] : []),
+    ...(report.gaps?.length ? ["", `<b>Gaps de mercado</b>\n${escapeHtml(report.gaps.join(", "))}`] : []),
     "",
     "<b>Headlines sugeridas</b>",
     ...report.suggestedHeadlines.map((item) => `• ${escapeHtml(item)}`),

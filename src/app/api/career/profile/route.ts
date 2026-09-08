@@ -1,13 +1,19 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
+import { getOrCreateProfile } from "@/lib/career-engine";
 import { isDashboardAuthorized } from "@/lib/dashboard-auth";
 
 function jsonError(message: string, status: number) { return NextResponse.json({ error: message }, { status }); }
 
 export async function GET(request: Request): Promise<NextResponse> {
   if (!isDashboardAuthorized(request)) return jsonError("Não autorizado.", 401);
-  const profile = await prisma.candidateProfile.findFirst({ orderBy: { createdAt: "asc" } });
-  return NextResponse.json(profile);
+  try {
+    const profile = await getOrCreateProfile();
+    return NextResponse.json(profile);
+  } catch (error) {
+    console.error("Falha ao carregar perfil profissional:", error);
+    return jsonError(error instanceof Error ? error.message : "Falha ao carregar perfil.", 500);
+  }
 }
 
 export async function PUT(request: Request): Promise<NextResponse> {

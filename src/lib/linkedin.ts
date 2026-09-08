@@ -1,8 +1,7 @@
 import type { FormatType, Post } from "@prisma/client";
 
-const LINKEDIN_API = "https://api.linkedin.com/v2";
 const LINKEDIN_REST_API = "https://api.linkedin.com/rest";
-const LINKEDIN_VERSION = process.env.LINKEDIN_VERSION ?? "202601";
+const LINKEDIN_VERSION = process.env.LINKEDIN_VERSION ?? "202606";
 
 function requireLinkedInConfig(): { accessToken: string; personUrn: string } {
   const accessToken = process.env.LINKEDIN_ACCESS_TOKEN;
@@ -11,19 +10,6 @@ function requireLinkedInConfig(): { accessToken: string; personUrn: string } {
     throw new Error("LINKEDIN_ACCESS_TOKEN e LINKEDIN_PERSON_URN são obrigatórios.");
   }
   return { accessToken, personUrn };
-}
-
-async function linkedinFetch(path: string, init: RequestInit): Promise<Response> {
-  const { accessToken } = requireLinkedInConfig();
-  return fetch(`${LINKEDIN_API}${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      "Content-Type": "application/json",
-      "X-Restli-Protocol-Version": "2.0.0",
-    },
-  });
-
 }
 
 async function linkedinRestFetch(path: string, init: RequestInit): Promise<Response> {
@@ -37,20 +23,6 @@ async function linkedinRestFetch(path: string, init: RequestInit): Promise<Respo
       "X-Restli-Protocol-Version": "2.0.0",
     },
   });
-}
-
-async function linkedinJson<T>(path: string, init: RequestInit): Promise<T> {
-  const response = await linkedinFetch(path, init);
-  const details = await response.text();
-  if (!response.ok) {
-    throw new Error(`LinkedIn ${response.status}: ${details.slice(0, 500)}`);
-  }
-  if (!details.trim()) return {} as T;
-  try {
-    return JSON.parse(details) as T;
-  } catch (error) {
-    throw new Error(`LinkedIn retornou JSON inválido (${response.status}).`, { cause: error });
-  }
 }
 
 async function linkedinRestJson<T>(path: string, init: RequestInit): Promise<T> {
@@ -173,7 +145,7 @@ export async function publishPostToLinkedIn(
       : {}),
   };
 
-  const response = await linkedinFetch("/posts", {
+  const response = await linkedinRestFetch("/posts", {
     method: "POST",
     body: JSON.stringify(body),
   });

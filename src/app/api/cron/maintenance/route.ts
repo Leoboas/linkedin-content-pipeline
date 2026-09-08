@@ -74,7 +74,7 @@ export async function GET(request: Request): Promise<NextResponse> {
   const duePosts = await prisma.post.findMany({
     where: {
       status: { in: [PostStatus.APPROVED, PostStatus.SCHEDULED] },
-      scheduledFor: { lte: now },
+      OR: [{ scheduledFor: { lte: now } }, { scheduledDate: { lte: now } }],
     },
     select: { id: true },
     orderBy: { scheduledFor: "asc" },

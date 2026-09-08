@@ -54,7 +54,10 @@ function profileJson(): { name: string; headline: string; about: string; skills:
     }
   }
   let parsed: unknown;
-  try { parsed = JSON.parse(raw); } catch { throw new Error("CAREER_PROFILE_JSON não contém JSON válido."); }
+  const normalized = raw.trim().startsWith("'") && raw.trim().endsWith("'")
+    ? raw.trim().slice(1, -1)
+    : raw.trim();
+  try { parsed = JSON.parse(normalized); } catch { throw new Error("CAREER_PROFILE_JSON não contém JSON válido."); }
   if (!parsed || typeof parsed !== "object") throw new Error("CAREER_PROFILE_JSON inválido.");
   const value = parsed as Record<string, unknown>;
   const name = text(value.name);
@@ -70,7 +73,7 @@ function profileJson(): { name: string; headline: string; about: string; skills:
   };
 }
 
-async function getOrCreateProfile() {
+export async function getOrCreateProfile() {
   const existing = await prisma.candidateProfile.findFirst({ orderBy: { createdAt: "asc" } });
   if (existing && process.env.CAREER_PROFILE_JSON && existing.name.toLocaleLowerCase("pt-BR").includes("demonstra")) {
     const seed = profileJson();
@@ -179,10 +182,10 @@ export async function runCareerScan(): Promise<{ runId: string; matches: CareerJ
 }
 
 export async function getCareerDashboardData() {
-  const profile = await prisma.candidateProfile.findFirst({ orderBy: { createdAt: "asc" } });
-  const matches = profile ? await prisma.jobMatch.findMany({ where: { profileId: profile.id }, include: { job: true }, orderBy: { score: "desc" }, take: 30 }) : [];
+  const profile = await getOrCreateProfile();
+  const matches = await prisma.jobMatch.findMany({ where: { profileId: profile.id }, include: { job: true }, orderBy: { score: "desc" }, take: 30 });
   const radar = await prisma.skillRadar.findMany({ orderBy: [{ gapScore: "desc" }, { demandCount: "desc" }], take: 30 });
-  const audit = profile ? await prisma.linkedInSeoAudit.findFirst({ where: { profileId: profile.id }, orderBy: { createdAt: "desc" } }) : null;
+  const audit = await prisma.linkedInSeoAudit.findFirst({ where: { profileId: profile.id }, orderBy: { createdAt: "desc" } });
   return { profile, matches, radar, audit };
 }
 

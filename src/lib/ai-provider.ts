@@ -38,13 +38,22 @@ function normalizeResponse(payload: unknown, provider: string): ChatResponse {
   return payload as ChatResponse;
 }
 
+function shouldTryTextFallback(error: unknown): boolean {
+  const current = providerErrorText(error).toLowerCase();
+  return isAiCapacityError(error) || /failed to perform inference|http error|fetch failed|network|timeout|\b5\d{2}\b/.test(current);
+}
+
 async function callGroq(request: ChatRequest): Promise<ChatResponse> {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) throw new Error("GROQ_API_KEY nao configurada.");
+  const configuredModel = process.env.GROQ_MODEL;
+  const model = configuredModel && !/llama-3\.[13].*-70b-versatile|llama-3\.1-8b-instant/i.test(configuredModel)
+    ? configuredModel
+    : "openai/gpt-oss-120b";
   const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ ...request, model: process.env.GROQ_MODEL || "llama-3.3-70b-versatile" }),
+    body: JSON.stringify({ ...request, model }),
     signal: AbortSignal.timeout(45_000),
   });
   const payload = await response.json().catch(() => null);
@@ -65,7 +74,9 @@ async function callOpenRouter(request: ChatRequest): Promise<ChatResponse> {
     },
     body: JSON.stringify({
       ...request,
-      model: process.env.OPENROUTER_MODEL || "meta-llama/llama-3.1-8b-instruct:free",
+      model: process.env.OPENROUTER_MODEL && !/meta-llama\/llama-3\.1-8b-instruct:free/i.test(process.env.OPENROUTER_MODEL)
+        ? process.env.OPENROUTER_MODEL
+        : "openai/gpt-oss-20b:free",
     }),
     signal: AbortSignal.timeout(45_000),
   });
@@ -81,9 +92,9 @@ export async function chatCompletionWithFallback(request: ChatRequest): Promise<
     const response = await client.chatCompletion(request as Parameters<InferenceClient["chatCompletion"]>[0]);
     return normalizeResponse(response, "Hugging Face");
   } catch (error) {
-    if (!isAiCapacityError(error)) throw error;
+    if (!shouldTryTextFallback(error)) throw error;
     const fallbackErrors: string[] = [];
-    for (const fallback of [callGroq, callOpenRouter]) {
+    for (const fallback of [callOpenRouter, callGroq]) {
       try { return await fallback(request); }
       catch (fallbackError) { fallbackErrors.push(providerErrorText(fallbackError)); }
     }

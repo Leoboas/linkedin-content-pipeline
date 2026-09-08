@@ -16,7 +16,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
   }
 
-  const body = (await request.json()) as { postId?: unknown };
+  let body: { postId?: unknown };
+  try { body = await request.json() as { postId?: unknown }; }
+  catch { return NextResponse.json({ error: "Corpo JSON inválido." }, { status: 400 }); }
   if (typeof body.postId !== "string") {
     return NextResponse.json({ error: "postId é obrigatório." }, { status: 400 });
   }
@@ -27,7 +29,24 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "O post precisa estar aprovado ou agendado." }, { status: 409 });
   }
 
-  const result = await publishDuePost(post.id);
-  if (!result.published) return NextResponse.json(result, { status: 409 });
-  return NextResponse.json(result);
+  try {
+    const result = await publishDuePost(post.id);
+    if (!result.published) return NextResponse.json(result, { status: 409 });
+    return NextResponse.json(result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const statusMatch = message.match(/LinkedIn\s+(\d{3})/i);
+    const providerStatus = statusMatch ? Number(statusMatch[1]) : undefined;
+    console.error("[api/linkedin/publish] publication failed", {
+      postId: post.id,
+      providerStatus,
+      error: message,
+    });
+    return NextResponse.json({
+      error: "O LinkedIn recusou a publicação.",
+      code: "LINKEDIN_PUBLISH_FAILED",
+      providerStatus,
+      details: message.slice(0, 800),
+    }, { status: 502 });
+  }
 }
