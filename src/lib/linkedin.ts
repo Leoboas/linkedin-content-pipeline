@@ -39,15 +39,11 @@ async function linkedinRestJson<T>(path: string, init: RequestInit): Promise<T> 
   }
 }
 
-interface RegisteredUpload {
+interface InitializedUpload {
   value?: {
-    asset?: string;
-    uploadMechanism?: {
-      "com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest"?: {
-        uploadUrl?: string;
-        headers?: Record<string, string>;
-      };
-    };
+    uploadUrl?: string;
+    image?: string;
+    document?: string;
   };
 }
 
@@ -63,43 +59,30 @@ async function registerAndUploadMedia(
   }
   const media = await mediaResponse.arrayBuffer();
   const isImage = formatType === "SINGLE_IMAGE";
-  const recipe = isImage
-    ? "urn:li:digitalmediaRecipe:feedshare-image"
-    : "urn:li:digitalmediaRecipe:feedshare-document";
-
-  const registered = await linkedinRestJson<RegisteredUpload>("/assets?action=registerUpload", {
+  const registered = await linkedinRestJson<InitializedUpload>(
+    isImage ? "/images?action=initializeUpload" : "/documents?action=initializeUpload",
+    {
     method: "POST",
     body: JSON.stringify({
-      registerUploadRequest: {
-        recipes: [recipe],
+      initializeUploadRequest: {
         owner: personUrn,
-        serviceRelationships: [
-          {
-            relationshipType: "OWNER",
-            identifier: "urn:li:userGeneratedContent",
-          },
-        ],
-        supportedUploadMechanism: ["SYNCHRONOUS_UPLOAD"],
       },
     }),
-  });
+    },
+  );
 
-  const upload =
-    registered.value?.uploadMechanism?.[
-      "com.linkedin.digitalmedia.uploading.MediaUploadHttpRequest"
-    ];
-  const asset = registered.value?.asset;
-  if (!upload?.uploadUrl || !asset) {
-    throw new Error("LinkedIn não retornou os dados de upload do asset.");
+  const uploadUrl = registered.value?.uploadUrl;
+  const mediaId = isImage ? registered.value?.image : registered.value?.document;
+  if (!uploadUrl || !mediaId) {
+    throw new Error("LinkedIn não retornou os dados de upload da mídia.");
   }
 
-  const uploadResponse = await fetch(upload.uploadUrl, {
+  const uploadResponse = await fetch(uploadUrl, {
     method: "PUT",
     headers: {
       Authorization: `Bearer ${accessToken}`,
       "Content-Type": isImage ? "image/png" : "application/pdf",
       "Content-Length": String(media.byteLength),
-      ...(upload.headers ?? {}),
     },
     body: media,
   });
@@ -108,7 +91,7 @@ async function registerAndUploadMedia(
   }
 
   void title;
-  return asset;
+  return mediaId;
 }
 
 interface LinkedInPostResponse {
@@ -137,7 +120,7 @@ export async function publishPostToLinkedIn(
       ? {
           content: {
             media: {
-              title: post.title,
+              ...(post.formatType === "SINGLE_IMAGE" ? { altText: post.title } : { title: post.title }),
               id: asset,
             },
           },

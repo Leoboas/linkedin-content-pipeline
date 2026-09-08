@@ -4,6 +4,7 @@ import { JobListingStatus, JobSource, Prisma, SearchRunStatus } from "@prisma/cl
 import { SEARCH_LOCATIONS, TARGET_JOB_TITLES } from "../../config/job-targets";
 import { prisma } from "@/lib/prisma";
 import { asStringArray, buildCareerContext, calculateMatch, tokenize } from "@/lib/career-rag";
+import { fetchLinkedInPublicJobs } from "@/lib/linkedin-job-fetcher";
 
 export interface CareerJobPreview {
   id: string;
@@ -137,8 +138,32 @@ async function fetchAuthorizedFeed(): Promise<FeedJob[]> {
 
 async function searchJobs(): Promise<{ jobs: FeedJob[]; queries: Array<{ title: string; location: string; url: string }> }> {
   const queries = TARGET_JOB_TITLES.flatMap((title) => SEARCH_LOCATIONS.map((location) => ({ title, location, url: searchUrl(title, location) })));
-  const jobs = await fetchAuthorizedFeed();
-  return { jobs, queries };
+  const authorizedJobs = await fetchAuthorizedFeed();
+  const publicJobs: FeedJob[] = [];
+  for (const query of queries) {
+    try {
+      const results = await fetchLinkedInPublicJobs(query.title, query.location);
+      publicJobs.push(...results.map((job) => ({
+        externalId: job.linkedinJobId,
+        title: job.title,
+        company: job.company ?? undefined,
+        location: job.location ?? undefined,
+        url: job.url,
+        description: "",
+        source: "LINKEDIN" as const,
+      })));
+    } catch (error) {
+      console.warn("[career] falha ao consultar LinkedIn Guest Jobs", {
+        title: query.title,
+        location: query.location,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    await new Promise((resolve) => setTimeout(resolve, 350));
+  }
+  const deduplicated = new Map<string, FeedJob>();
+  for (const job of [...authorizedJobs, ...publicJobs]) deduplicated.set(job.externalId ?? job.url, job);
+  return { jobs: [...deduplicated.values()], queries };
 }
 
 export async function runCareerScan(): Promise<{ runId: string; matches: CareerJobPreview[]; queries: number; discovered: number; message: string }> {
@@ -174,7 +199,7 @@ export async function runCareerScan(): Promise<{ runId: string; matches: CareerJ
 
     const sorted = matches.sort((left, right) => right.score - left.score).slice(0, 20);
     await prisma.careerSearchRun.update({ where: { id: run.id }, data: { status: SearchRunStatus.COMPLETED, queryCount: search.queries.length, resultCount: search.jobs.length, completedAt: new Date() } });
-    return { runId: run.id, matches: sorted, queries: search.queries.length, discovered: search.jobs.length, message: search.jobs.length ? "Vagas atualizadas a partir do feed autorizado." : "Nenhum feed autorizado configurado; foram geradas as consultas LinkedIn sem scraping." };
+    return { runId: run.id, matches: sorted, queries: search.queries.length, discovered: search.jobs.length, message: search.jobs.length ? "Vagas atualizadas a partir das consultas públicas do LinkedIn e de feeds autorizados." : "Nenhuma vaga retornada pelo LinkedIn Guest Jobs ou por feed autorizado." };
   } catch (error) {
     await prisma.careerSearchRun.update({ where: { id: run.id }, data: { status: SearchRunStatus.FAILED, errorMessage: error instanceof Error ? error.message : "Erro desconhecido", completedAt: new Date() } });
     throw error;
