@@ -174,9 +174,11 @@ export function AdminDashboard({
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ postId: post.id }),
       });
-      const payload = await response.json().catch(() => null) as { error?: string; reason?: string } | null;
+      const payload = await response.json().catch(() => null) as { error?: string; reason?: string; details?: string; providerStatus?: number } | null;
       if (!response.ok) {
-        notify(payload?.error ?? payload?.reason ?? `Não foi possível publicar (${response.status}).`, "error");
+        const provider = payload?.providerStatus ? ` LinkedIn HTTP ${payload.providerStatus}.` : "";
+        const details = payload?.details ? ` ${payload.details}` : "";
+        notify(`${payload?.error ?? payload?.reason ?? `Não foi possível publicar (${response.status}).`}${provider}${details}`.slice(0, 900), "error");
         return;
       }
       setPosts((current) => current.map((item) => item.id === post.id ? { ...item, status: "PUBLISHED" } : item));
