@@ -11,3 +11,4 @@ generated/
 !.env.example
 *.log
 *.tsbuildinfo
+public/test-output.jpg

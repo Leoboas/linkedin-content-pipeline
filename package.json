@@ -15,6 +15,7 @@
     "case:nasa": "node --experimental-strip-types scripts/update-nasa-case.ts",
     "queue:reset": "node --experimental-strip-types scripts/reset-queue.ts",
     "audit:test": "tsx scripts/test-profile-audit.ts",
+    "test:image": "tsx scripts/test-premium-image.ts",
     "career:scan": "node scripts/career-scan.mjs",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push"
