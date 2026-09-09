@@ -244,6 +244,16 @@ function ensureVisualMix(posts: GeneratedPost[]): GeneratedPost[] {
   });
 }
 
+function ensureConversationalCta(posts: GeneratedPost[]): GeneratedPost[] {
+  return posts.map((post) => {
+    if (/[?!]/.test(post.textContent.slice(-360))) return post;
+    return {
+      ...post,
+      textContent: `${post.textContent.trim()}\n\nQual decisão você tomaria nesse cenário?`,
+    };
+  });
+}
+
 function assertBatchQuality(posts: GeneratedPost[]): void {
   const pillars = posts.map((post) => post.editorialPillar);
   if (new Set(pillars).size !== 3 || !pillars.includes("TOFU") || !pillars.includes("MOFU") || !pillars.includes("BOFU")) {
@@ -286,7 +296,7 @@ async function refineGeneratedPosts(posts: GeneratedPost[], ragSystemPrompt?: st
   });
   const content = completion.choices[0]?.message.content;
   if (!content) throw new Error("A Hugging Face retornou uma resposta vazia na revisao editorial.");
-  const refined = ensureVisualMix(parseGeneratedPosts(parseModelJson(content)));
+  const refined = ensureConversationalCta(ensureVisualMix(parseGeneratedPosts(parseModelJson(content))));
   assertBatchQuality(refined);
   return refined;
 }
@@ -337,7 +347,7 @@ async function repairSinglePost(input: {
   if (!content) throw new Error("A Hugging Face retornou uma resposta vazia no reparo editorial.");
   const parsed = parseModelJson(content) as { post?: unknown };
   const candidate = parseSingleGeneratedPost(parsed.post ?? parsed, 0);
-  const repaired = ensureVisualMix([{
+  const repaired = ensureConversationalCta([{
     ...candidate,
     editorialPillar: input.editorialPillar,
     funnelStage: input.funnelStage,
@@ -391,7 +401,7 @@ export async function generateWeeklyPosts(
   const content = completion.choices[0]?.message.content;
   if (!content) throw new Error("A Hugging Face retornou uma resposta vazia.");
   try {
-     const parsed = ensureVisualMix(parseGeneratedPosts(parseModelJson(content)));
+     const parsed = ensureConversationalCta(ensureVisualMix(parseGeneratedPosts(parseModelJson(content))));
      if (!needsEditorialRefinement(parsed)) {
        assertBatchQuality(parsed);
        return parsed;
@@ -454,7 +464,7 @@ export async function regeneratePostWithFeedback(input: {
       funnelStage: input.funnelStage ?? candidate.funnelStage,
       formatType: input.formatType ?? candidate.formatType,
     };
-    const normalized = ensureVisualMix([locked])[0];
+    const normalized = ensureConversationalCta(ensureVisualMix([locked]))[0];
     const issues = contentQualityIssues(normalized, { expectedPillar: input.editorialPillar });
     if (issues.length === 0) return normalized;
     return repairSinglePost({

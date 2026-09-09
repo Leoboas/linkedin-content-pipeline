@@ -26,6 +26,67 @@ function humanPrompt(ragSystemPrompt: string): string {
   return `${ragSystemPrompt}\n\n===== regras editoriais anti-AI =====\n${HUMAN_COPY_RULES}`;
 }
 
+function deterministicWeeklyPosts(): GeneratedPost[] {
+  return [
+    {
+      editorialPillar: "TOFU",
+      funnelStage: "ATTENTION",
+      formatType: "CAROUSEL_PDF",
+      title: "Seu dashboard responde à pergunta certa, mas no horário errado?",
+      textContent: [
+        "Quando seu dashboard responde à pergunta certa, mas no horário errado, a decisão já começou a envelhecer?",
+        "Esse é um problema de dados antes de ser um problema de visualização.",
+        "Quando a carga chega atrasada, o time toma decisões com uma fotografia antiga do negócio. O gráfico pode estar correto e, ainda assim, induzir uma ação ruim.",
+        "O primeiro diagnóstico é simples: meça o tempo entre a origem do evento, a transformação e a disponibilidade para quem decide. Depois, separe atraso de processamento, falha de contrato e ausência de observabilidade.",
+        "Uma plataforma confiável não promete que nada vai falhar. Ela torna o atraso visível, atribui o impacto e cria um caminho curto para a correção.",
+        "Como você mede o custo de decidir com dados atrasados?",
+      ].join("\n\n"),
+      slides: [
+        { title: "O dado chegou tarde", bullets: ["Dashboard correto não significa decisão atualizada", "Tempo de disponibilidade precisa ser medido"] },
+        { title: "Onde investigar", bullets: ["Origem do evento", "Transformação e contrato", "Publicação para o consumidor"] },
+        { title: "Pergunta prática", bullets: ["Qual decisão muda quando o dado atrasa?", "O impacto tem dono e alerta?"] },
+      ],
+    },
+    {
+      editorialPillar: "MOFU",
+      funnelStage: "INTEREST",
+      formatType: "SINGLE_IMAGE",
+      title: "Escalar um pipeline começa pelos contratos, não pelo cluster",
+      textContent: [
+        "Antes de escalar o cluster, confirme se o contrato do dado consegue escalar com ele.",
+        "Mais capacidade computacional não corrige uma entrada instável ou uma regra de negócio ambígua.",
+        "Antes de escolher a próxima ferramenta, defina o esquema esperado, a frequência de atualização, a tolerância a atraso e quem responde quando uma premissa muda.",
+        "Em seguida, registre qualidade como parte do fluxo: volume recebido, valores nulos, duplicidade, atraso e compatibilidade entre versões. Esses sinais ajudam a separar crescimento saudável de complexidade acumulada.",
+        "A arquitetura fica mais simples quando cada etapa tem uma responsabilidade observável. O time consegue discutir trade-offs com evidência, e não com preferência por tecnologia.",
+        "Qual contrato do seu pipeline ainda depende de conhecimento informal?",
+      ].join("\n\n"),
+      slides: [
+        { title: "Escala sem contrato", bullets: ["Mais máquinas não definem qualidade", "Entradas instáveis geram retrabalho"] },
+        { title: "O mínimo observável", bullets: ["Esquema", "Atraso", "Duplicidade", "Valores nulos"] },
+      ],
+    },
+    {
+      editorialPillar: "BOFU",
+      funnelStage: "DESIRE",
+      formatType: "CAROUSEL_PDF",
+      title: "Uma arquitetura de dados madura reduz decisões invisíveis",
+      textContent: [
+        "Quando a arquitetura explica a origem do número, decisões invisíveis começam a desaparecer.",
+        "O ganho não aparece apenas no tempo de execução. Ele aparece quando engenharia, produto e negócio conseguem explicar por que um número mudou.",
+        "Uma implementação pragmática começa com camadas bem definidas: dado bruto preservado, transformação auditável e uma camada final orientada ao consumo. O histórico permite reprocessar; os contratos reduzem surpresa; os indicadores mostram o custo operacional.",
+        "Com essa base, modelos de machine learning deixam de receber arquivos preparados manualmente e passam a consumir sinais rastreáveis. O time pode avaliar precisão, atraso e custo no mesmo fluxo.",
+        "Não é sobre adicionar componentes. É sobre reduzir a distância entre uma mudança na origem e uma decisão explicável.",
+        "Qual parte da sua arquitetura ainda não consegue explicar a origem do número?",
+      ].join("\n\n"),
+      slides: [
+        { title: "Dado explicável", bullets: ["Origem preservada", "Transformação auditável", "Consumo com contexto"] },
+        { title: "Impacto operacional", bullets: ["Reprocessamento previsível", "Menos decisões invisíveis"] },
+        { title: "Próximo passo", bullets: ["Escolha um indicador", "Mapeie sua linhagem", "Meça o custo da mudança"] },
+      ],
+    },
+  ];
+}
+
 export async function generateNewPostBatch(options: BatchOptions = {}): Promise<string[]> {
   const editorialLine = await prisma.editorialLine.findFirst({ orderBy: { createdAt: "asc" } });
   if (!editorialLine) throw new Error("Nenhuma EditorialLine cadastrada para orientar a geração.");
@@ -34,18 +95,33 @@ export async function generateNewPostBatch(options: BatchOptions = {}): Promise<
   if (Number.isNaN(referenceDate.getTime())) throw new Error("triggeredAt inválido.");
   const baseDate = getNextPipelineBaseDate(referenceDate);
   const ragContext = await buildRagContext(editorialLine.id);
-  const generated = await generateWithHuggingFace({
-    themes: editorialLine.themes,
-    toneOfVoice: editorialLine.toneOfVoice,
-    aidaRules: editorialLine.aidaRules,
-    cvCases: editorialLine.cvCases,
-    language: editorialLine.language,
-  }, { ragSystemPrompt: humanPrompt(ragContext.systemPrompt) });
+  let generated: GeneratedPost[];
+  try {
+    generated = await generateWithHuggingFace({
+      themes: editorialLine.themes,
+      toneOfVoice: editorialLine.toneOfVoice,
+      aidaRules: editorialLine.aidaRules,
+      cvCases: editorialLine.cvCases,
+      language: editorialLine.language,
+    }, { ragSystemPrompt: humanPrompt(ragContext.systemPrompt) });
+  } catch (error) {
+    console.error("[content-engine] geração de IA indisponível; usando lote editorial determinístico", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    generated = deterministicWeeklyPosts();
+  }
 
   const weekKey = baseDate.toISOString().slice(0, 10);
   const batchKey = options.batchKey ?? `weekly:${weekKey}`;
   const ids: string[] = [];
-  const orderedGenerated = [...generated].sort((left, right) => pillarOrder(left.editorialPillar) - pillarOrder(right.editorialPillar));
+  const sortedGenerated = [...generated].sort((left, right) => pillarOrder(left.editorialPillar) - pillarOrder(right.editorialPillar));
+  const orderedGenerated = ["TOFU", "MOFU", "BOFU"]
+    .map((pillar) => sortedGenerated.find((post) => post.editorialPillar === pillar))
+    .filter((post): post is GeneratedPost => Boolean(post));
+  for (const post of sortedGenerated) {
+    if (orderedGenerated.length >= 3) break;
+    if (!orderedGenerated.includes(post)) orderedGenerated.push(post);
+  }
 
   for (const [index, post] of orderedGenerated.entries()) {
     const generationKey = `${batchKey}:${index}`;

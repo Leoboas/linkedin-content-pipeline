@@ -14,6 +14,8 @@
     "queue:reconcile": "node --experimental-strip-types scripts/reconcile-queue.ts",
     "case:nasa": "node --experimental-strip-types scripts/update-nasa-case.ts",
     "queue:reset": "node --experimental-strip-types scripts/reset-queue.ts",
+    "queue:cancel-scheduled": "node --experimental-strip-types scripts/cancel-scheduled-posts.ts",
+    "generate:weekly-now": "tsx scripts/generate-weekly-now.ts",
     "audit:test": "tsx scripts/test-profile-audit.ts",
     "test:image": "tsx scripts/test-premium-image.ts",
     "career:scan": "node scripts/career-scan.mjs",

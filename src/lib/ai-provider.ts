@@ -47,13 +47,13 @@ async function callGroq(request: ChatRequest): Promise<ChatResponse> {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) throw new Error("GROQ_API_KEY nao configurada.");
   const configuredModel = process.env.GROQ_MODEL;
-  const model = configuredModel && !/llama-3\.[13].*-70b-versatile|llama-3\.1-8b-instant/i.test(configuredModel)
+  const model = configuredModel && !/gpt-oss-120b|llama-3\.[13].*-70b-versatile/i.test(configuredModel)
     ? configuredModel
-    : "openai/gpt-oss-120b";
+    : "llama-3.1-8b-instant";
   const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ ...request, model }),
+    body: JSON.stringify({ ...request, model, max_tokens: Math.min(request.max_tokens ?? 2000, 3200) }),
     signal: AbortSignal.timeout(45_000),
   });
   const payload = await response.json().catch(() => null);
@@ -76,7 +76,8 @@ async function callOpenRouter(request: ChatRequest): Promise<ChatResponse> {
       ...request,
       model: process.env.OPENROUTER_MODEL && !/meta-llama\/llama-3\.1-8b-instruct:free/i.test(process.env.OPENROUTER_MODEL)
         ? process.env.OPENROUTER_MODEL
-        : "openai/gpt-oss-20b:free",
+        : "openai/gpt-oss-20b",
+      max_tokens: Math.min(request.max_tokens ?? 2000, 3200),
     }),
     signal: AbortSignal.timeout(45_000),
   });
@@ -94,7 +95,7 @@ export async function chatCompletionWithFallback(request: ChatRequest): Promise<
   } catch (error) {
     if (!shouldTryTextFallback(error)) throw error;
     const fallbackErrors: string[] = [];
-    for (const fallback of [callOpenRouter, callGroq]) {
+    for (const fallback of [callGroq, callOpenRouter]) {
       try { return await fallback(request); }
       catch (fallbackError) { fallbackErrors.push(providerErrorText(fallbackError)); }
     }
