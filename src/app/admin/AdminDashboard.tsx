@@ -141,7 +141,7 @@ export function AdminDashboard({
       });
       if (!response.ok) {
         const payload = await response.json().catch(() => null) as { error?: string } | null;
-        notify(response.status === 401 ? "Token inválido ou ausente." : payload?.error ?? `Não foi possível iniciar (${response.status}).`, "error");
+        notify(payload?.error ?? (response.status === 401 ? "Token inválido ou ausente." : `Não foi possível iniciar (${response.status}).`), "error");
         return;
       }
       setPosts((current) => current.map((item) => item.id === post.id ? { ...item, status: "REGENERATING" } : item));
