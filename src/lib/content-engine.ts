@@ -7,6 +7,7 @@ import { generateImageWithFallback } from "@/lib/creative-renderer";
 import { prisma } from "@/lib/prisma";
 import { buildRagContext, recordRejectionFeedback } from "@/lib/rag";
 import { getNextPipelineBaseDate, pillarOrder, scheduledDateForPost } from "@/lib/scheduling";
+import { contentFrameworkPrompt } from "../../config/content-skills";
 
 export const HUMAN_COPY_RULES = [
   "Escreva como um engenheiro ou líder de dados que viveu o problema na prática, não como um redator genérico.",
@@ -23,7 +24,7 @@ interface BatchOptions {
 }
 
 function humanPrompt(ragSystemPrompt: string): string {
-  return `${ragSystemPrompt}\n\n===== regras editoriais anti-AI =====\n${HUMAN_COPY_RULES}`;
+  return `${ragSystemPrompt}\n\n===== regras editoriais anti-AI =====\n${HUMAN_COPY_RULES}\n\n===== frameworks B2B de conteúdo =====\n${contentFrameworkPrompt()}`;
 }
 
 function deterministicWeeklyPosts(): GeneratedPost[] {

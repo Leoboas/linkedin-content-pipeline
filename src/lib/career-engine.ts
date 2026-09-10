@@ -5,6 +5,7 @@ import { SEARCH_LOCATIONS, TARGET_JOB_TITLES } from "../../config/job-targets";
 import { prisma } from "@/lib/prisma";
 import { asStringArray, buildCareerContext, calculateMatch, tokenize } from "@/lib/career-rag";
 import { fetchLinkedInPublicJobs } from "@/lib/linkedin-job-fetcher";
+import { extractSkillsFromText, normalizeSkills } from "@/lib/skills-normalizer";
 
 export interface CareerJobPreview {
   id: string;
@@ -47,7 +48,7 @@ function profileJson(): { name: string; headline: string; about: string; skills:
         name: "Perfil de demonstração",
         headline: "Engenharia de Dados | Arquitetura | Automação",
         about: dossier.slice(0, 3_000),
-        skills: skills.length > 0 ? skills : ["Python", "SQL", "Cloud"],
+        skills: normalizeSkills(skills.length > 0 ? skills : ["Python", "SQL", "Cloud"]),
         targetTitles: [...TARGET_JOB_TITLES],
       };
     } catch (error) {
@@ -67,7 +68,7 @@ function profileJson(): { name: string; headline: string; about: string; skills:
   if (!name || !headline || !about) throw new Error("CAREER_PROFILE_JSON exige name, headline e about.");
   return {
     name, headline, about,
-    skills: Array.isArray(value.skills) ? value.skills.filter((item): item is string => typeof item === "string") : [],
+    skills: normalizeSkills(Array.isArray(value.skills) ? value.skills.filter((item): item is string => typeof item === "string") : []),
     targetTitles: Array.isArray(value.targetTitles) ? value.targetTitles.filter((item): item is string => typeof item === "string") : [...TARGET_JOB_TITLES],
     ...(text(value.location) ? { location: text(value.location) } : {}),
     ...(text(value.linkedinUrl) ? { linkedinUrl: text(value.linkedinUrl) } : {}),
@@ -86,12 +87,18 @@ export async function getOrCreateProfile() {
         about: seed.about,
         location: seed.location,
         linkedinUrl: seed.linkedinUrl,
-        skills: seed.skills,
+        skills: normalizeSkills(seed.skills),
         targetTitles: seed.targetTitles,
       },
     });
   }
-  if (existing) return existing;
+  if (existing) {
+    const normalizedSkills = normalizeSkills(asStringArray(existing.skills));
+    if (JSON.stringify(normalizedSkills) !== JSON.stringify(asStringArray(existing.skills))) {
+      return prisma.candidateProfile.update({ where: { id: existing.id }, data: { skills: normalizedSkills } });
+    }
+    return existing;
+  }
   const seed = profileJson();
   return prisma.candidateProfile.create({
     data: {
@@ -191,9 +198,14 @@ export async function runCareerScan(): Promise<{ runId: string; matches: CareerJ
     }
 
     const skillCounts = new Map<string, number>();
-    for (const job of search.jobs) for (const token of tokenize(`${job.title} ${job.description}`)) skillCounts.set(token, (skillCounts.get(token) ?? 0) + 1);
+    for (const job of search.jobs) {
+      for (const skill of extractSkillsFromText(`${job.title} ${job.description}`)) {
+        skillCounts.set(skill, (skillCounts.get(skill) ?? 0) + 1);
+      }
+    }
+    const profileSkills = normalizeSkills(asStringArray(profile.skills));
     for (const [skill, demandCount] of skillCounts.entries()) {
-      const candidateLevel = asStringArray(profile.skills).some((item) => tokenize(item).includes(skill)) ? 1 : 0;
+      const candidateLevel = profileSkills.includes(skill) ? 1 : 0;
       await prisma.skillRadar.upsert({ where: { skill_category: { skill, category: "job-market" } }, update: { demandCount, candidateLevel, gapScore: candidateLevel ? 0 : Math.min(100, demandCount * 10), evidence: { source: "authorized-feed" } }, create: { skill, category: "job-market", demandCount, candidateLevel, gapScore: candidateLevel ? 0 : Math.min(100, demandCount * 10), evidence: { source: "authorized-feed" } } });
     }
 

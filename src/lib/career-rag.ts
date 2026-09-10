@@ -1,4 +1,5 @@
 import type { Prisma } from "@prisma/client";
+import { extractSkillsFromText, normalizeSkills } from "@/lib/skills-normalizer";
 
 const STOP_WORDS = new Set([
   "para", "com", "uma", "das", "dos", "the", "and", "from", "your", "you", "que", "por", "sobre",
@@ -38,13 +39,21 @@ export function calculateMatch(input: {
 }): { score: number; label: string; matchedSkills: string[]; skillGaps: string[]; rationale: string } {
   const jobText = `${input.jobTitle} ${input.jobDescription}`;
   const jobTokens = new Set(tokenize(jobText));
-  const skills = input.profileSkills.flatMap(tokenize);
+  const canonicalProfileSkills = normalizeSkills(input.profileSkills);
+  const canonicalJobSkills = extractSkillsFromText(jobText);
+  const canonicalMatches = canonicalProfileSkills.filter((skill) => canonicalJobSkills.includes(skill));
+  const skills = canonicalProfileSkills.flatMap(tokenize);
   const uniqueSkills = [...new Set(skills)];
-  const matchedSkills = uniqueSkills.filter((skill) => jobTokens.has(skill));
-  const skillGaps = tokenize(input.jobTitle).filter((token) => !uniqueSkills.includes(token) && jobTokens.has(token)).slice(0, 8);
+  const tokenMatches = uniqueSkills.filter((skill) => jobTokens.has(skill));
+  const matchedSkills = [...new Set([...canonicalMatches, ...tokenMatches])];
+  const canonicalGaps = canonicalJobSkills.filter((skill) => !canonicalProfileSkills.includes(skill));
+  const tokenGaps = tokenize(input.jobTitle).filter((token) => !uniqueSkills.includes(token) && jobTokens.has(token));
+  const skillGaps = [...new Set([...canonicalGaps, ...tokenGaps])].slice(0, 8);
   const titleTokens = tokenize(input.jobTitle);
   const titleMatch = titleTokens.length === 0 ? 0 : titleTokens.filter((token) => uniqueSkills.includes(token)).length / titleTokens.length;
-  const skillMatch = uniqueSkills.length === 0 ? 0 : matchedSkills.length / Math.min(uniqueSkills.length, 12);
+  const comparableSkillCount = canonicalJobSkills.length > 0 ? canonicalProfileSkills.length : uniqueSkills.length;
+  const comparableMatches = canonicalJobSkills.length > 0 ? canonicalMatches.length : tokenMatches.length;
+  const skillMatch = comparableSkillCount === 0 ? 0 : comparableMatches / Math.min(comparableSkillCount, 12);
   const contextBoost = tokenize(input.profileContext).some((token) => jobTokens.has(token)) ? 0.08 : 0;
   const score = Math.round(Math.min(100, (skillMatch * 62) + (titleMatch * 30) + (contextBoost * 100)));
   const label = score >= 75 ? "Alto match" : score >= 50 ? "Match moderado" : "Baixo match";

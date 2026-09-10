@@ -5,6 +5,8 @@ import { auditLinkedInProfile as persistLinkedInAudit } from "@/lib/career-engin
 import { generateTextWithFallback } from "@/lib/ai-provider";
 import { asStringArray, tokenize } from "@/lib/career-rag";
 import { prisma } from "@/lib/prisma";
+import { contentFrameworkPrompt } from "../../config/content-skills";
+import { extractSkillsFromText, normalizeSkills } from "@/lib/skills-normalizer";
 
 export interface ProfileAuditReport {
   score: number;
@@ -35,18 +37,12 @@ function unique(values: string[], limit: number): string[] {
 }
 
 function dossierKeywords(dossier: string): string[] {
-  const known = [
-    "Python", "SQL", "PostgreSQL", "AWS", "Airflow", "Docker", "Data Lake",
-    "ETL", "ELT", "Machine Learning", "ML", "GCP", "Azure", "dbt", "Kafka",
-    "Terraform", "Kubernetes", "FinOps", "Analytics", "Engenharia de Dados",
-  ];
-  const lower = dossier.toLocaleLowerCase("pt-BR");
-  return known.filter((keyword) => lower.includes(keyword.toLocaleLowerCase("pt-BR")));
+  return extractSkillsFromText(dossier);
 }
 
 function suggestedHeadlines(profile: { name: string; headline: string; targetTitles: Prisma.JsonValue; skills: Prisma.JsonValue }): string[] {
   const targets = asStringArray(profile.targetTitles);
-  const skills = asStringArray(profile.skills);
+  const skills = normalizeSkills(asStringArray(profile.skills));
   const primaryTarget = targets[0] ?? "Engenharia de Dados";
   const stack = skills.slice(0, 3).join(" | ") || "Dados | Cloud | Automacao";
   return unique([
@@ -90,7 +86,7 @@ function clampScore(value: unknown, fallback: number): number {
 }
 
 function deterministicMarketScore(profile: { headline: string; about: string; skills: Prisma.JsonValue; targetTitles: Prisma.JsonValue }): number {
-  const skills = asStringArray(profile.skills);
+  const skills = normalizeSkills(asStringArray(profile.skills));
   const targets = asStringArray(profile.targetTitles);
   const hasEvidence = /\d|%|R\$|resultado|crescimento|redução|aumento/i.test(profile.about);
   return Math.min(100,
@@ -116,6 +112,7 @@ async function generateMarketAudit(input: {
       {
         role: "system",
         content: [
+          "Frameworks de comunicação para a auditoria:\n" + contentFrameworkPrompt(),
           "Você é uma Tech Recruiter Executiva e especialista em ATS, SEO de LinkedIn e posicionamento para liderança de Dados, MarTech e Tecnologia.",
           "Faça uma auditoria crítica de mercado, não uma validação de preenchimento.",
           "Compare o perfil com os cargos-alvo e diga o que aumenta ou reduz a chance de aparecer em buscas e avançar para entrevista.",
@@ -129,7 +126,7 @@ async function generateMarketAudit(input: {
       {
         role: "user",
         content: JSON.stringify({
-          profile: { name: input.profile.name, headline: input.profile.headline, about: input.profile.about, skills: asStringArray(input.profile.skills), targetTitles: asStringArray(input.profile.targetTitles) },
+          profile: { name: input.profile.name, headline: input.profile.headline, about: input.profile.about, skills: normalizeSkills(asStringArray(input.profile.skills)), targetTitles: asStringArray(input.profile.targetTitles) },
           dossier: input.dossier.slice(0, 8_000),
           recentJobHistory: input.history,
         }),
@@ -155,7 +152,7 @@ export async function auditLinkedInProfile(): Promise<ProfileAuditReport> {
   });
   const historyTerms = history.flatMap((match) => tokenize(`${match.job.title} ${match.job.description}`));
   const keywords = unique([
-    ...asStringArray(profile.skills),
+    ...normalizeSkills(asStringArray(profile.skills)),
     ...dossierKeywords(dossier),
     ...historyTerms.filter((term) => term.length >= 4),
   ], 20);
