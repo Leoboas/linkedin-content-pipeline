@@ -220,7 +220,7 @@ export async function runCareerScan(): Promise<{ runId: string; matches: CareerJ
 
 export async function getCareerDashboardData() {
   const profile = await getOrCreateProfile();
-  const matches = await prisma.jobMatch.findMany({ where: { profileId: profile.id }, include: { job: true }, orderBy: { score: "desc" }, take: 30 });
+  const matches = await prisma.jobMatch.findMany({ where: { profileId: profile.id }, include: { job: true }, orderBy: [{ score: "desc" }, { createdAt: "desc" }], take: 30 });
   const radar = await prisma.skillRadar.findMany({ orderBy: [{ gapScore: "desc" }, { demandCount: "desc" }], take: 30 });
   const audit = await prisma.linkedInSeoAudit.findFirst({ where: { profileId: profile.id }, orderBy: { createdAt: "desc" } });
   return { profile, matches, radar, audit };
