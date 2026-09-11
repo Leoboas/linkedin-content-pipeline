@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { JobValidator } from "./JobValidator";
 import { ResumeBuilder } from "./ResumeBuilder";
 
 export interface CareerDashboardData {
@@ -91,6 +92,7 @@ export function CareerDashboard({ initialData }: { initialData: CareerDashboardD
       </form>
     </section>
     <ResumeBuilder token={token} matches={data.matches} />
+    <JobValidator token={token} onValidated={() => void loadDashboard()} />
     <section className="admin-panel"><div className="admin-section-heading"><div><div className="admin-kicker">Matchmaker</div><h2>Vagas com maior aderência</h2></div></div><div className="admin-list">{data.matches.length === 0 ? <article className="admin-card"><strong>🎯 Nenhuma vaga analisada recentemente</strong><p className="admin-meta">Envie qualquer URL de vaga no seu bot do Telegram com <code>/vaga &lt;URL&gt;</code> para gerar o Match Score instantâneo, ou aguarde o recebimento automático via Webhook.</p></article> : data.matches.map((match) => <article className="admin-card" key={match.id}><div className="admin-card-head"><div><strong>{match.title}</strong><div className="admin-meta">{match.company ?? "Empresa não informada"} · {match.location ?? "Local não informado"}</div></div><span className="admin-status">{Math.round(match.score)}/100 · {match.label}</span></div><p>{match.rationale}</p><p className="admin-meta">Competências: {match.matchedSkills.join(", ") || "nenhuma"} · Gaps: {match.skillGaps.join(", ") || "nenhum detectado"}</p><a href={match.url} target="_blank" rel="noreferrer">Abrir vaga</a></article>)}</div></section>
     <section className="admin-panel"><div className="admin-section-heading"><div><div className="admin-kicker">Skill Radar</div><h2>Competências demandadas</h2></div></div><div className="admin-list">{data.radar.slice(0, 12).map((item) => <div className="admin-card" key={`${item.category}-${item.skill}`}><strong>{item.skill}</strong><span className="admin-meta">Demanda: {item.demandCount} · Gap: {Math.round(item.gapScore)}/100</span></div>)}</div></section>
     <section className="admin-panel"><div className="admin-section-heading"><div><div className="admin-kicker">SEO LinkedIn</div><h2>Auditoria do perfil</h2></div></div>{data.audit ? <><div className="admin-card"><strong>Nota: {Math.round(data.audit.score)}/100</strong><p>{data.audit.strengths.join(" · ")}</p></div><ul>{data.audit.recommendations.map((item) => <li key={item}>{item}</li>)}</ul></> : <p className="admin-meta">Clique em “Auditar LinkedIn” para gerar a primeira análise.</p>}</section>
