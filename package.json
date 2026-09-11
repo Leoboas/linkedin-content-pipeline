@@ -19,6 +19,7 @@
     "audit:test": "tsx scripts/test-profile-audit.ts",
     "test:image": "tsx scripts/test-premium-image.ts",
     "career:scan": "node scripts/career-scan.mjs",
+    "jobs:cleanup-telegram": "node --experimental-strip-types scripts/cleanup-telegram-placeholders.ts",
     "prisma:generate": "prisma generate",
     "prisma:push": "prisma db push"
   },

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { PostStatus } from "@prisma/client";
 import { requestPostPublication, requestPostRefactor } from "@/lib/content-engine";
-import { analyzeManualJob } from "@/lib/career-engine";
+import { JobDescriptionUnavailableError, matchInboundJob } from "@/lib/job-matcher";
 import { auditLinkedInProfile } from "@/lib/profile-auditor";
 import { prisma } from "@/lib/prisma";
 import { nextValidPostingWindow } from "@/lib/scheduler";
@@ -9,7 +9,7 @@ import { formatDateInBrazil } from "@/lib/dates";
 import { requestBatchIfStockIsLow } from "@/lib/stock";
 import {
   answerCallbackQuery, editTelegramMessage, postMarker, sendAgenda,
-  sendCareerJobAnalysis, sendCareerJobPrompt, sendFeedbackPrompt, sendFeedbackQueued, sendProfileAudit, sendTelegramText,
+  sendCareerJobAnalysis, sendFeedbackPrompt, sendFeedbackQueued, sendProfileAudit, sendTelegramText,
 } from "@/lib/telegram";
 
 interface TelegramMessage {
@@ -98,13 +98,19 @@ async function handleMessageCommand(message: TelegramMessage): Promise<NextRespo
   }
   const jobUrl = text.match(/^\/vaga(?:@\w+)?\s+(https?:\/\/\S+)$/i)?.[1];
   if (jobUrl) {
-    const job = await prisma.jobListing.upsert({
-      where: { source_externalId: { source: "MANUAL", externalId: jobUrl } },
-      update: { url: jobUrl },
-      create: { source: "MANUAL", externalId: jobUrl, title: "Vaga compartilhada pelo Telegram", url: jobUrl, description: "Aguardando descrição fornecida pelo usuário." },
-    });
-    await sendCareerJobPrompt(chatId, job.id, jobUrl);
-    return NextResponse.json({ ok: true, command: "vaga", jobId: job.id });
+    try {
+      const analysis = await matchInboundJob({ url: jobUrl, body: "" });
+      await sendCareerJobAnalysis(chatId, analysis);
+      return NextResponse.json({ ok: true, command: "vaga", jobId: analysis.jobId, score: analysis.score });
+    } catch (error) {
+      if (error instanceof JobDescriptionUnavailableError) {
+        await sendTelegramText(chatId, "⚠️ O LinkedIn bloqueou a leitura automática desse link. Por favor, copie todo o texto de descrição da vaga e envie aqui no chat para eu analisar.");
+        return NextResponse.json({ ok: true, command: "vaga", blocked: true });
+      }
+      console.error("[Telegram Webhook] Falha ao analisar URL de vaga:", error);
+      await sendTelegramText(chatId, "⚠️ Não consegui analisar esse link agora. Copie todo o texto da descrição da vaga e envie aqui no chat.");
+      return NextResponse.json({ ok: false, command: "vaga" }, { status: 502 });
+    }
   }
   return null;
 }
@@ -169,13 +175,31 @@ export async function POST(request: Request): Promise<NextResponse> {
   const replyMessageId = reply?.message_id;
   if (feedback && jobId && updateChatId !== undefined) {
     try {
-      const analysis = await analyzeManualJob(jobId, feedback);
+      const repliedJob = await prisma.jobListing.findUnique({ where: { id: jobId } });
+      if (!repliedJob) {
+        await sendTelegramText(updateChatId, "⚠️ Não encontrei a vaga associada. Envie novamente a URL com /vaga ou cole a descrição completa.");
+        return NextResponse.json({ ok: false, jobNotFound: true }, { status: 404 });
+      }
+      const analysis = await matchInboundJob({ url: repliedJob.url, subject: repliedJob.title, body: feedback });
       await sendCareerJobAnalysis(updateChatId, analysis, replyMessageId);
       return NextResponse.json({ ok: true, careerJobAnalyzed: true, jobId });
     } catch (error) {
       console.error("Falha ao analisar vaga recebida pelo Telegram:", error);
       await sendTelegramText(updateChatId, "⚠️ Não consegui analisar esta vaga. Verifique se o perfil profissional foi salvo em /career e tente novamente com a descrição completa.");
       return NextResponse.json({ error: "Falha ao analisar vaga." }, { status: 502 });
+    }
+  }
+  if (feedback && !reply && feedback.length >= 240 && updateChatId !== undefined) {
+    try {
+      const analysis = await matchInboundJob({ body: feedback });
+      await sendCareerJobAnalysis(updateChatId, analysis);
+      return NextResponse.json({ ok: true, careerJobAnalyzed: true, jobId: analysis.jobId, manual: true });
+    } catch (error) {
+      console.error("[Telegram Webhook] Falha ao analisar descrição manual:", error);
+      await sendTelegramText(updateChatId, error instanceof JobDescriptionUnavailableError
+        ? "⚠️ Não consegui identificar uma descrição de vaga válida. Envie o texto completo, incluindo título, empresa, responsabilidades e requisitos."
+        : "⚠️ Não consegui analisar esta descrição agora. Tente enviar o texto completo novamente.");
+      return NextResponse.json({ error: "Falha ao analisar descrição manual." }, { status: 502 });
     }
   }
   const postId = extractPostId(reply?.text ?? reply?.caption);
