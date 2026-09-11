@@ -58,6 +58,13 @@ enum SearchRunStatus {
   FAILED
 }
 
+enum ResumeDraftStatus {
+  DRAFT
+  AWAITING_REVIEW
+  APPROVED
+  ARCHIVED
+}
+
 model EditorialLine {
   id          String   @id @default(uuid()) @db.Uuid
   name        String
@@ -157,6 +164,7 @@ model CandidateProfile {
   documents      CareerDocument[]
   matches        JobMatch[]
   seoAudits      LinkedInSeoAudit[]
+  resumeDrafts   ResumeDraft[]
 }
 
 model CareerDocument {
@@ -170,6 +178,26 @@ model CareerDocument {
   profile     CandidateProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
   @@index([profileId, createdAt])
+}
+
+model ResumeDraft {
+  id             String           @id @default(uuid()) @db.Uuid
+  profileId      String           @db.Uuid
+  sourceJobId    String?          @db.Uuid
+  targetRole     String
+  template       String
+  jobDescription String?          @db.Text
+  content        Json
+  atsScore       Float            @default(0)
+  validation     Json?
+  status         ResumeDraftStatus @default(DRAFT)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+  profile        CandidateProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  sourceJob      JobListing?      @relation(fields: [sourceJobId], references: [id], onDelete: SetNull)
+
+  @@index([profileId, updatedAt])
+  @@index([targetRole, atsScore])
 }
 
 model JobListing {
@@ -187,6 +215,7 @@ model JobListing {
   status             JobListingStatus  @default(OPEN)
   rawData            Json?
   matches            JobMatch[]
+  resumeDrafts       ResumeDraft[]
 
   @@unique([source, externalId])
   @@index([status, discoveredAt])

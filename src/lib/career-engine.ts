@@ -37,7 +37,11 @@ function text(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function profileJson(): { name: string; headline: string; about: string; skills: string[]; targetTitles: string[]; location?: string; linkedinUrl?: string } {
+function jsonDocument(value: unknown): Prisma.InputJsonValue | undefined {
+  return value && typeof value === "object" ? value as Prisma.InputJsonValue : undefined;
+}
+
+function profileJson(): { name: string; headline: string; about: string; skills: string[]; targetTitles: string[]; location?: string; linkedinUrl?: string; experience?: Prisma.InputJsonValue; education?: Prisma.InputJsonValue } {
   const raw = process.env.CAREER_PROFILE_JSON;
   if (!raw?.trim()) {
     try {
@@ -72,6 +76,8 @@ function profileJson(): { name: string; headline: string; about: string; skills:
     targetTitles: Array.isArray(value.targetTitles) ? value.targetTitles.filter((item): item is string => typeof item === "string") : [...TARGET_JOB_TITLES],
     ...(text(value.location) ? { location: text(value.location) } : {}),
     ...(text(value.linkedinUrl) ? { linkedinUrl: text(value.linkedinUrl) } : {}),
+    ...(jsonDocument(value.experience) ? { experience: jsonDocument(value.experience) } : {}),
+    ...(jsonDocument(value.education) ? { education: jsonDocument(value.education) } : {}),
   };
 }
 
@@ -89,6 +95,8 @@ export async function getOrCreateProfile() {
         linkedinUrl: seed.linkedinUrl,
         skills: normalizeSkills(seed.skills),
         targetTitles: seed.targetTitles,
+        experience: seed.experience,
+        education: seed.education,
       },
     });
   }
@@ -109,6 +117,8 @@ export async function getOrCreateProfile() {
       linkedinUrl: seed.linkedinUrl,
       skills: seed.skills,
       targetTitles: seed.targetTitles,
+      experience: seed.experience,
+      education: seed.education,
     },
   });
 }
