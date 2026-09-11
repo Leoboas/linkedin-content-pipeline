@@ -28,6 +28,13 @@ function containsAlias(text: string, alias: string): boolean {
   return text.includes(alias);
 }
 
+function recoverMalformedCanonical(raw: string): string | null {
+  const value = fold(raw);
+  if (/extract.*transform.*load.*etl/.test(value)) return "Extract, Transform, Load (ETL)";
+  if (/extract.*load.*transform.*elt/.test(value)) return "Extract, Load, Transform (ELT)";
+  return null;
+}
+
 /**
  * Maps user/job variations to the canonical labels used by LinkedIn search.
  * Unknown skills are preserved in trimmed form so the normalizer never loses
@@ -39,6 +46,12 @@ export function normalizeSkills(skills: string[]): string[] {
     const raw = rawSkill.trim();
     if (!raw) continue;
     const key = fold(raw);
+    if (/^(extract|transform|load)$/.test(key)) continue;
+    const recovered = recoverMalformedCanonical(raw);
+    if (recovered) {
+      if (!normalized.includes(recovered)) normalized.push(recovered);
+      continue;
+    }
     const direct = aliasMap.get(key);
     const matches = direct
       ? [direct]

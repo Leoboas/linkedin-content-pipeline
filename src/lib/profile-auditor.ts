@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { Prisma } from "@prisma/client";
 import { auditLinkedInProfile as persistLinkedInAudit } from "@/lib/career-engine";
 import { generateTextWithFallback } from "@/lib/ai-provider";
-import { asStringArray, tokenize } from "@/lib/career-rag";
+import { asStringArray } from "@/lib/career-rag";
 import { prisma } from "@/lib/prisma";
 import { contentFrameworkPrompt } from "../../config/content-skills";
 import { extractSkillsFromText, normalizeSkills } from "@/lib/skills-normalizer";
@@ -21,6 +21,15 @@ export interface ProfileAuditReport {
   recommendations: string[];
   jobHistoryCount: number;
   createdAt: string;
+}
+
+const FALLBACK_HEADLINE = "Tech Lead & Lead Data Architect | CTO Hands-on | Python, AWS, PySpark, Airflow & Node.js | Arquitetura de Dados, ETL/ELT & ROI B2B";
+const FALLBACK_TARGET_TITLES = ["Tech Lead (Data/Cloud)", "Lead Data Architect", "CTO Hands-on", "Head of Data"];
+const LEGACY_TARGET_PATTERNS = [/(?:executive|head|diretor|gerente).*(?:marketing|martech)/i];
+
+function fallbackTargetTitles(value: Prisma.JsonValue): string[] {
+  const current = asStringArray(value).filter((role) => !LEGACY_TARGET_PATTERNS.some((pattern) => pattern.test(role)));
+  return current.length > 0 ? current.slice(0, 4) : FALLBACK_TARGET_TITLES;
 }
 
 export async function loadBrandDossier(): Promise<string> {
@@ -41,27 +50,24 @@ function dossierKeywords(dossier: string): string[] {
 }
 
 function suggestedHeadlines(profile: { name: string; headline: string; targetTitles: Prisma.JsonValue; skills: Prisma.JsonValue }): string[] {
-  const targets = asStringArray(profile.targetTitles);
-  const skills = normalizeSkills(asStringArray(profile.skills));
-  const primaryTarget = targets[0] ?? "Engenharia de Dados";
-  const stack = skills.slice(0, 3).join(" | ") || "Dados | Cloud | Automacao";
+  const targets = fallbackTargetTitles(profile.targetTitles);
+  const stack = "Python | AWS | PySpark | Airflow | Node.js";
   return unique([
-    `${primaryTarget} | ${stack} | Transformo dados em decisoes operacionais`,
-    `${primaryTarget} com foco em arquitetura, confiabilidade e resultado de negocio`,
-    `${profile.headline} | ${stack}`,
+    FALLBACK_HEADLINE,
+    targets[0] + " | " + stack + " | Arquitetura de dados e ROI B2B",
+    (targets[1] ?? "Head of Data") + " | Governança, escala e impacto mensurável",
   ], 3);
 }
 
 function aboutRewrite(profile: { name: string; headline: string; about: string; targetTitles: Prisma.JsonValue; skills: Prisma.JsonValue }, dossier: string): string {
-  const skills = unique([...asStringArray(profile.skills), ...dossierKeywords(dossier)], 8);
-  const targets = asStringArray(profile.targetTitles);
-  const focus = targets.slice(0, 3).join(", ") || "engenharia de dados e tecnologia";
-  const stack = skills.join(", ") || "Python, SQL e cloud";
+  const skills = unique([...normalizeSkills(asStringArray(profile.skills)), ...dossierKeywords(dossier)], 8);
+  const focus = fallbackTargetTitles(profile.targetTitles).slice(0, 3).join(", ");
+  const stack = skills.join(", ") || "Python, AWS, PySpark, Airflow e Node.js";
   return [
-    `Sou ${profile.name}, ${profile.headline}. Trabalho na interseção entre engenharia, dados e operação de negócio.`,
-    `Meu foco é construir soluções confiáveis para ${focus}, com decisões técnicas orientadas por impacto e custo.`,
-    `Atuo com ${stack}. Gosto de transformar problemas ambíguos em pipelines observáveis, processos simples de operar e resultados que o time consegue medir.`,
-    `Neste perfil compartilho aprendizados de arquitetura, automação, qualidade de dados e liderança técnica.`,
+    "Sou " + profile.name + ", " + FALLBACK_HEADLINE + ". Trabalho na interseção entre engenharia, dados e operação de negócio.",
+    "Meu foco é construir soluções confiáveis para " + focus + ", com decisões técnicas orientadas por impacto, governança e custo.",
+    "Atuo com " + stack + ". Transformo problemas ambíguos em pipelines observáveis, processos simples de operar e resultados que o time consegue medir.",
+    "Neste perfil compartilho aprendizados de arquitetura de dados, automação, qualidade, liderança técnica e ROI B2B.",
   ].join("\n\n").slice(0, 2_000);
 }
 
@@ -113,7 +119,7 @@ async function generateMarketAudit(input: {
         role: "system",
         content: [
           "Frameworks de comunicação para a auditoria:\n" + contentFrameworkPrompt(),
-          "Você é uma Tech Recruiter Executiva e especialista em ATS, SEO de LinkedIn e posicionamento para liderança de Dados, MarTech e Tecnologia.",
+          "Você é uma Tech Recruiter Executiva e especialista em ATS, SEO de LinkedIn e posicionamento para liderança de Dados, Cloud e Tecnologia.",
           "Faça uma auditoria crítica de mercado, não uma validação de preenchimento.",
           "Compare o perfil com os cargos-alvo e diga o que aumenta ou reduz a chance de aparecer em buscas e avançar para entrevista.",
           "Avalie clareza de senioridade, diferenciação, evidências, palavras-chave, coerência entre headline e Sobre, riscos de generalismo e gaps de mercado.",
@@ -150,11 +156,11 @@ export async function auditLinkedInProfile(): Promise<ProfileAuditReport> {
     orderBy: { createdAt: "desc" },
     take: 20,
   });
-  const historyTerms = history.flatMap((match) => tokenize(`${match.job.title} ${match.job.description}`));
+  const historySkills = extractSkillsFromText(history.map((match) => `${match.job.title} ${match.job.description}`).join(" "));
   const keywords = unique([
     ...normalizeSkills(asStringArray(profile.skills)),
     ...dossierKeywords(dossier),
-    ...historyTerms.filter((term) => term.length >= 4),
+    ...historySkills,
   ], 20);
   const recommendations = asStringArray(persisted.recommendations);
   const strengths = asStringArray(persisted.strengths);
@@ -169,7 +175,7 @@ export async function auditLinkedInProfile(): Promise<ProfileAuditReport> {
   } catch (error) {
     console.warn("[profile-auditor] IA de mercado indisponível; usando análise determinística", error instanceof Error ? error.message : String(error));
   }
-  const fallbackRoles = asStringArray(profile.targetTitles).slice(0, 8).map((role) => ({ role, fitScore: baseScore, reason: "Compatibilidade estimada pela combinação de senioridade, competências e evidências cadastradas." }));
+  const fallbackRoles = fallbackTargetTitles(profile.targetTitles).map((role) => ({ role, fitScore: baseScore, reason: "Compatibilidade estimada pela combinação de senioridade, competências e evidências cadastradas." }));
   const roleFit = Array.isArray(ai?.roleFit)
     ? ai.roleFit.flatMap((item): Array<{ role: string; fitScore: number; reason: string }> => {
       if (!item || typeof item !== "object") return [];
@@ -183,7 +189,7 @@ export async function auditLinkedInProfile(): Promise<ProfileAuditReport> {
     strengths: [...new Set([...stringList(ai?.strengths), ...strengths])].slice(0, 8),
     gaps: stringList(ai?.gaps),
     recruiterVerdict: typeof ai?.recruiterVerdict === "string" ? ai.recruiterVerdict : "O perfil tem base técnica forte, mas precisa ser avaliado pela clareza do posicionamento e pela evidência de impacto para cada cargo-alvo.",
-    marketPositioning: typeof ai?.marketPositioning === "string" ? ai.marketPositioning : `Posicionamento híbrido entre ${asStringArray(profile.targetTitles).slice(0, 3).join(", ") || "Dados e Tecnologia"}.`,
+    marketPositioning: typeof ai?.marketPositioning === "string" ? ai.marketPositioning : `Posicionamento híbrido entre ${fallbackTargetTitles(profile.targetTitles).slice(0, 3).join(", ") || "Dados e Tecnologia"}.`,
     roleFit,
     suggestedHeadlines: stringList(ai?.suggestedHeadlines).slice(0, 5).length ? stringList(ai?.suggestedHeadlines).slice(0, 5) : suggestedHeadlines(profile),
     seoKeywords: [...new Set([...stringList(ai?.seoKeywords), ...keywords])].slice(0, 30),
