@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { dateKeyInBrazil, formatDateInBrazil, formatDateTimeLocalInBrazil, parseDateTimeLocalInBrazil } from "@/lib/dates";
 
 export interface DashboardPost {
@@ -29,11 +29,10 @@ type Toast = { text: string; kind: "success" | "error" };
 
 const statusClass: Record<string, string> = {
   APPROVED: "approved", SCHEDULED: "scheduled", DRAFT: "draft", PUBLISHED: "published",
-  REGENERATING: "regenerating", PUBLISHING: "publishing", CANCELLED: "cancelled",
+  REGENERATING: "regenerating", PUBLISHING: "publishing", CANCELLED: "cancelled", ARCHIVED: "cancelled",
 };
-const visibleStatuses = new Set([
-  "APPROVED", "SCHEDULED", "DRAFT", "PUBLISHED", "AWAITING_APPROVAL", "REGENERATING", "PUBLISHING", "CANCELLED",
-]);
+const activeStatuses = new Set(["APPROVED", "SCHEDULED", "DRAFT", "PUBLISHED", "AWAITING_APPROVAL", "REGENERATING", "PUBLISHING"]);
+const backlogStatuses = new Set(["CANCELLED", "ARCHIVED", "REJECTED", "REJECTED_PENDING_FEEDBACK"]);
 const weekdays = ["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"];
 
 function dateKey(value: string): string { return dateKeyInBrazil(new Date(value)); }
@@ -53,6 +52,7 @@ export function AdminDashboard({
   const [posts, setPosts] = useState(initialPosts);
   const [references, setReferences] = useState(initialReferences);
   const [view, setView] = useState<View>("list");
+  const [showBacklog, setShowBacklog] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
   const [aiPost, setAiPost] = useState<DashboardPost | null>(null);
   const [aiFeedback, setAiFeedback] = useState("");
@@ -63,7 +63,7 @@ export function AdminDashboard({
   const [metrics, setMetrics] = useState({ impressions: "", reactions: "", comments: "", shares: "", profileViews: "" });
   const [toast, setToast] = useState<Toast | null>(null);
 
-  const visiblePosts = useMemo(() => posts.filter((post) => visibleStatuses.has(post.status)), [posts]);
+  const visiblePosts = useMemo(() => posts.filter((post) => (showBacklog ? backlogStatuses : activeStatuses).has(post.status)), [posts, showBacklog]);
   const monthCells = useMemo(() => {
     const first = new Date(`${month}-01T00:00:00`);
     const offset = (first.getDay() + 6) % 7;
@@ -90,6 +90,18 @@ export function AdminDashboard({
   function authHeaders(): HeadersInit {
     return token ? { Authorization: `Bearer ${token}` } : {};
   }
+
+  useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      const response = await fetch(`/api/posts?view=${showBacklog ? "backlog" : "active"}`, { headers: authHeaders(), cache: "no-store" });
+      if (!response.ok || !mounted) return;
+      setPosts(await response.json() as DashboardPost[]);
+    };
+    void load();
+    const timer = window.setInterval(() => void load(), 10000);
+    return () => { mounted = false; window.clearInterval(timer); };
+  }, [showBacklog]);
 
   async function save(post: DashboardPost, form: HTMLFormElement) {
     const data = new FormData(form);
@@ -236,6 +248,8 @@ export function AdminDashboard({
     <section className="admin-panel">
       <div className="admin-toolbar">
         {["list", "month", "week"].map((item) => <button key={item} className={`admin-button ${view === item ? "active" : ""}`} onClick={() => setView(item as View)}>{item === "list" ? "Timeline" : item === "month" ? "Calendário mensal" : "Semana atual"}</button>)}
+        <button className={`admin-button ${!showBacklog ? "active" : ""}`} onClick={() => setShowBacklog(false)}>Ativos</button>
+        <button className={`admin-button ${showBacklog ? "active" : ""}`} onClick={() => setShowBacklog(true)}>Backlog</button>
         <button className="admin-button" onClick={() => { void fetch("/api/auth/logout", { method: "POST" }).then(() => window.location.assign("/admin")); }}>Sair</button>
       </div>
       {view === "list" && <div className="admin-list">{visiblePosts.map((post) => <article className={`admin-card ${statusClass[post.status] ?? ""}`} key={post.id}>

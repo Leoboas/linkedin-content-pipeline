@@ -133,7 +133,9 @@ export async function generateNewPostBatch(options: BatchOptions = {}): Promise<
   const postsForApproval = orderedGenerated.slice(0, availableSlots);
 
   for (const [index, post] of postsForApproval.entries()) {
-    const generationKey = `${batchKey}:${index}`;
+    // A chave representa o slot editorial, não a tentativa de execução.
+    // Repetir cron, Inngest ou comando manual deve reencontrar o mesmo post.
+    const generationKey = `weekly:${weekKey}:${post.editorialPillar}`;
     const existing = await prisma.post.findUnique({ where: { generationKey } });
     if (existing) {
       ids.push(existing.id);

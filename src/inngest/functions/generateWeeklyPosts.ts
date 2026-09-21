@@ -157,10 +157,11 @@ export const reformulatePostWithFeedback = inngest.createFunction(
         if (!regenerated || regenerated.status !== PostStatus.DRAFT) throw new Error("Rascunho reformulado não encontrado para envio.");
         if (regenerated.qualityStatus !== QualityGateStatus.PASS) {
           console.warn("[inngest] reformulação retida pelo quality gate", { postId: data.postId, qualityStatus: regenerated.qualityStatus, qualityScore: regenerated.qualityScore });
-          return { postId: data.postId, sent: false, qualityStatus: regenerated.qualityStatus, qualityScore: regenerated.qualityScore };
         }
+        // O resultado precisa sempre ficar visível para o autor. O card informa
+        // a necessidade de revisão; não deixamos a reformulação presa em DRAFT.
         await sendPostForApproval(regenerated);
-        return { postId: data.postId, sent: true };
+        return { postId: data.postId, sent: true, qualityStatus: regenerated.qualityStatus, qualityScore: regenerated.qualityScore };
       });
       return { postId: data.postId, status: PostStatus.DRAFT, sent: true };
     } catch (error) {

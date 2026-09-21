@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { PostStatus } from "@prisma/client";
 import { formatDateTimeLocalInBrazil } from "@/lib/dates";
 import { AdminDashboard, type DashboardPost } from "./AdminDashboard";
 import { cookies } from "next/headers";
@@ -15,7 +16,10 @@ export default async function AdminPage() {
   const cookieStore = await cookies();
   if (!isDashboardSessionValid(cookieStore.get(DASHBOARD_SESSION_COOKIE)?.value)) return <DashboardLogin nextPath="/admin" />;
   const [posts, references] = await Promise.all([
-    prisma.post.findMany({ orderBy: { scheduledFor: "asc" }, take: 200 }),
+    prisma.post.findMany({
+      where: { status: { in: [PostStatus.DRAFT, PostStatus.AWAITING_APPROVAL, PostStatus.REGENERATING, PostStatus.APPROVED, PostStatus.SCHEDULED, PostStatus.PUBLISHING, PostStatus.PUBLISHED] } },
+      orderBy: { scheduledFor: "asc" }, take: 200,
+    }),
     prisma.contentReference.findMany({
       orderBy: { createdAt: "desc" },
       take: 30,

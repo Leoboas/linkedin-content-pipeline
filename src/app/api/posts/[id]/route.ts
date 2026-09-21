@@ -132,7 +132,7 @@ export async function DELETE(request: Request, context: RouteContext): Promise<N
     if (current.status === PostStatus.CANCELLED) return jsonResponse({ id, status: PostStatus.CANCELLED });
     const result = await prisma.post.updateMany({
       where: { id, status: current.status },
-      data: { status: PostStatus.CANCELLED },
+      data: { status: PostStatus.CANCELLED, generationKey: null },
     });
     if (result.count === 0) return jsonResponse({ id, status: PostStatus.CANCELLED });
     await requestBatchIfStockIsLow({ force: true });

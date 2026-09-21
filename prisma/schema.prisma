@@ -38,6 +38,7 @@ enum PostStatus {
   REGENERATING
   PUBLISHING
   CANCELLED
+  ARCHIVED
 }
 
 enum JobListingStatus {
