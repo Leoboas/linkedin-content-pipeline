@@ -3,6 +3,11 @@ import type { FormatType, Post } from "@prisma/client";
 const LINKEDIN_REST_API = "https://api.linkedin.com/rest";
 const LINKEDIN_VERSION = process.env.LINKEDIN_VERSION ?? "202606";
 
+export interface LinkedInMemberMetric {
+  metricType: string;
+  count: number;
+}
+
 function requireLinkedInConfig(): { accessToken: string; personUrn: string } {
   const accessToken = process.env.LINKEDIN_ACCESS_TOKEN;
   const personUrn = process.env.LINKEDIN_PERSON_URN;
@@ -37,6 +42,36 @@ async function linkedinRestJson<T>(path: string, init: RequestInit): Promise<T> 
   } catch (error) {
     throw new Error(`LinkedIn retornou JSON inválido (${response.status}).`, { cause: error });
   }
+}
+
+export async function fetchLinkedInMemberPostMetrics(postUrn: string): Promise<LinkedInMemberMetric[]> {
+  const normalizedUrn = postUrn.trim();
+  if (!/^urn:li:(share|ugcPost):[A-Za-z0-9_-]+$/.test(normalizedUrn)) {
+    throw new Error("linkedinPostId não é uma URN share/ugcPost válida.");
+  }
+  const entityType = normalizedUrn.includes(":ugcPost:") ? "ugc" : "share";
+  const metrics = ["IMPRESSION", "REACTION", "COMMENT", "RESHARE"];
+  const result: LinkedInMemberMetric[] = [];
+  for (const metric of metrics) {
+    const params = new URLSearchParams({
+      q: "entity",
+      entity: `(${entityType}:${normalizedUrn})`,
+      queryType: metric,
+      aggregation: "TOTAL",
+    });
+    const payload = await linkedinRestJson<{ elements?: Array<{ count?: number; metricType?: Record<string, string> | string }> }>(
+      `/memberCreatorPostAnalytics?${params.toString()}`,
+      { method: "GET" },
+    );
+    const element = payload.elements?.[0];
+    const metricType = typeof element?.metricType === "string"
+      ? element.metricType
+      : element?.metricType && typeof element.metricType === "object"
+        ? Object.values(element.metricType)[0]
+        : metric;
+    result.push({ metricType: metricType ?? metric, count: Math.max(0, Math.round(Number(element?.count ?? 0))) });
+  }
+  return result;
 }
 
 interface InitializedUpload {

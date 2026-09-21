@@ -5,6 +5,7 @@ import { publishDuePost } from "@/lib/publishing";
 import { reformulatePostFromFeedback } from "@/lib/reformulation";
 import { reconcileOverduePosts } from "@/lib/scheduler";
 import { requestBatchIfStockIsLow } from "@/lib/stock";
+import { syncLinkedInPostMetrics } from "@/lib/linkedin-analytics";
 
 export const maxDuration = 300;
 
@@ -25,6 +26,13 @@ export async function GET(request: Request): Promise<NextResponse> {
   const errors: string[] = [];
   let regenerated = 0;
   let published = 0;
+  let analytics: Awaited<ReturnType<typeof syncLinkedInPostMetrics>> | null = null;
+
+  try {
+    analytics = await syncLinkedInPostMetrics();
+  } catch (error) {
+    errors.push(`analytics:${error instanceof Error ? error.message : "erro desconhecido"}`);
+  }
 
   // Recupera uma execução de feedback que foi aceita pelo webhook, mas não foi
   // consumida pelo Inngest ou expirou durante a chamada à IA.
@@ -102,6 +110,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     reconciliation,
     regenerated,
     published,
+    analytics,
     stock,
     errors,
   }, { status: errors.length === 0 ? 200 : 207 });

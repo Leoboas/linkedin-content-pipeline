@@ -21,6 +21,14 @@ export interface ReviewablePost {
   mediaUrl?: string | null;
 }
 
+export interface RenderedImageReview {
+  score: number;
+  textDetected: boolean;
+  issues: string[];
+  recommendations: string[];
+  summary: string;
+}
+
 function parseJson(value: string): Record<string, unknown> {
   const fence = String.fromCharCode(96).repeat(3);
   const cleaned = value.trim().startsWith(fence)
@@ -104,4 +112,36 @@ export async function reviewPostQuality(post: ReviewablePost): Promise<PostQuali
 
 export function qualityReviewJson(review: PostQualityReview): Prisma.InputJsonValue {
   return review as unknown as Prisma.InputJsonValue;
+}
+
+export async function reviewRenderedImage(input: { mediaUrl: string; title: string; editorialPillar: string }): Promise<RenderedImageReview | null> {
+  if (!process.env.GEMINI_API_KEY || /\.pdf(?:\?|$)/i.test(input.mediaUrl)) return null;
+  try {
+    const response = await fetch(input.mediaUrl, { signal: AbortSignal.timeout(20_000) });
+    if (!response.ok) throw new Error(`mídia retornou ${response.status}`);
+    const mimeType = response.headers.get("content-type")?.split(";")[0] || "image/png";
+    if (!mimeType.startsWith("image/")) return null;
+    const bytes = Buffer.from(await response.arrayBuffer()).toString("base64");
+    const model = process.env.GEMINI_MODEL?.trim() || "gemini-3.6-flash";
+    const result = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(process.env.GEMINI_API_KEY)}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        systemInstruction: { parts: [{ text: "Você é uma diretora de arte editorial para LinkedIn B2B. Avalie a imagem final com rigor: legibilidade, texto cortado/deformado, hierarquia, contraste, poluição, coerência com o pilar e qualidade profissional. Não confunda ausência de texto com problema quando a peça for uma foto. Retorne somente JSON: {score:number,textDetected:boolean,issues:string[],recommendations:string[],summary:string}." }] },
+        contents: [{ role: "user", parts: [
+          { text: JSON.stringify({ title: input.title, editorialPillar: input.editorialPillar, task: "Avalie esta imagem antes da aprovação." }) },
+          { inlineData: { mimeType, data: bytes } },
+        ] }],
+        generationConfig: { temperature: 0, responseMimeType: "application/json", maxOutputTokens: 800 },
+      }),
+      signal: AbortSignal.timeout(45_000),
+    });
+    const payload = await result.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+    const text = payload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("") ?? "";
+    const parsed = parseJson(text);
+    return { score: number(parsed.score), textDetected: parsed.textDetected === true, issues: strings(parsed.issues), recommendations: strings(parsed.recommendations), summary: typeof parsed.summary === "string" ? parsed.summary : "Revisão visual concluída." };
+  } catch (error) {
+    console.warn("[content-reviewer] revisão visual indisponível", error instanceof Error ? error.message : String(error));
+    return null;
+  }
 }

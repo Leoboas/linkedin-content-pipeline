@@ -14,6 +14,7 @@ import { pillarOrder } from "@/lib/scheduling";
 import { requestBatchIfStockIsLow } from "@/lib/stock";
 import { uploadPublicAsset } from "@/lib/storage";
 import { sendBatchToTelegram, sendFeedbackRetryPrompt, sendHuggingFaceQuotaAlert, sendPostForApproval } from "@/lib/telegram";
+import { reviewRenderedImage } from "@/lib/content-reviewer";
 
 interface WeeklyEventData {
   triggeredAt?: string;
@@ -81,7 +82,23 @@ export const weeklyPostPipeline = inngest.createFunction(
         const mediaUrl = post.formatType === "CAROUSEL_PDF"
           ? await renderCarouselPdf(post.id, post.title, slides)
           : await renderSingleImage(post.id, post.title, post.textContent, slides, post.imagePrompt, post.editorialPillar);
-        await prisma.post.update({ where: { id: post.id }, data: { mediaUrl } });
+        const visualReview = post.formatType === "SINGLE_IMAGE"
+          ? await reviewRenderedImage({ mediaUrl, title: post.title, editorialPillar: post.editorialPillar })
+          : null;
+        const currentReview = post.qualityReview && typeof post.qualityReview === "object" && !Array.isArray(post.qualityReview)
+          ? post.qualityReview as Record<string, unknown>
+          : {};
+        const visualBlocked = Boolean(visualReview && visualReview.score < 72);
+        await prisma.post.update({ where: { id: post.id }, data: {
+          mediaUrl,
+          ...(visualReview ? {
+            qualityScore: Math.min(post.qualityScore ?? 100, visualReview.score),
+            qualityStatus: visualBlocked ? QualityGateStatus.NEEDS_REVISION : post.qualityStatus,
+            status: visualBlocked ? PostStatus.DRAFT : post.status,
+            qualityReview: { ...currentReview, renderedImage: visualReview } as unknown as Prisma.InputJsonValue,
+            qualityReviewedAt: new Date(),
+          } : {}),
+        } });
       }
       return posts.map((post) => post.id);
     });
