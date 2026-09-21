@@ -128,6 +128,7 @@ model PostMetric {
   reactions       Int      @default(0)
   comments        Int      @default(0)
   shares          Int      @default(0)
+  profileViews    Int      @default(0)
   engagementScore Float?
   capturedAt      DateTime @default(now())
   post            Post     @relation(fields: [postId], references: [id], onDelete: Cascade)

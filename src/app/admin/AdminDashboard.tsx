@@ -56,9 +56,11 @@ export function AdminDashboard({
   const [editing, setEditing] = useState<string | null>(null);
   const [aiPost, setAiPost] = useState<DashboardPost | null>(null);
   const [aiFeedback, setAiFeedback] = useState("");
-  const [token, setToken] = useState("");
+  const [token] = useState("session");
   const [month, setMonth] = useState(() => formatDateTimeLocalInBrazil(new Date()).slice(0, 7));
   const [publishing, setPublishing] = useState<string | null>(null);
+  const [metricsPostId, setMetricsPostId] = useState("");
+  const [metrics, setMetrics] = useState({ impressions: "", reactions: "", comments: "", shares: "", profileViews: "" });
   const [toast, setToast] = useState<Toast | null>(null);
 
   const visiblePosts = useMemo(() => posts.filter((post) => visibleStatuses.has(post.status)), [posts]);
@@ -213,6 +215,19 @@ export function AdminDashboard({
     } catch { notify("Falha de rede ao remover a referência.", "error"); }
   }
 
+  async function saveMetrics(form: HTMLFormElement) {
+    if (!metricsPostId) { notify("Selecione um post publicado.", "error"); return; }
+    const data = new FormData(form);
+    try {
+      const response = await fetch(`/api/posts/${metricsPostId}/metrics`, { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() }, body: JSON.stringify(Object.fromEntries(data.entries())) });
+      const payload = await response.json() as { error?: string; engagementScore?: number | null };
+      if (!response.ok) { notify(payload.error ?? "Não foi possível salvar as métricas.", "error"); return; }
+      setPosts((current) => current.map((post) => post.id === metricsPostId ? { ...post, engagementScore: payload.engagementScore ?? post.engagementScore, engagementLabel: "Métrica real" } : post));
+      setMetrics({ impressions: "", reactions: "", comments: "", shares: "", profileViews: "" });
+      notify("Métricas salvas e score real atualizado.");
+    } catch { notify("Falha de rede ao salvar métricas.", "error"); }
+  }
+
   function eventsFor(day: string): DashboardPost[] { return visiblePosts.filter((post) => dateKey(post.scheduledDate) === day); }
 
   return <main className="admin-shell"><div className="admin-container">
@@ -221,7 +236,7 @@ export function AdminDashboard({
     <section className="admin-panel">
       <div className="admin-toolbar">
         {["list", "month", "week"].map((item) => <button key={item} className={`admin-button ${view === item ? "active" : ""}`} onClick={() => setView(item as View)}>{item === "list" ? "Timeline" : item === "month" ? "Calendário mensal" : "Semana atual"}</button>)}
-        <input className="admin-input admin-token" type="password" placeholder="DASHBOARD_ADMIN_TOKEN (para editar)" value={token} onChange={(event) => setToken(event.target.value)} />
+        <button className="admin-button" onClick={() => { void fetch("/api/auth/logout", { method: "POST" }).then(() => window.location.assign("/admin")); }}>Sair</button>
       </div>
       {view === "list" && <div className="admin-list">{visiblePosts.map((post) => <article className={`admin-card ${statusClass[post.status] ?? ""}`} key={post.id}>
         <div className="admin-card-head"><div><strong>{post.title}</strong><div className="admin-meta">{post.editorialPillar} · {formatDate(post.scheduledDate)} · {post.engagementScore === null ? "sem score" : `${Math.round(post.engagementScore)}/100 (${post.engagementLabel ?? ""})`}</div></div><span className="admin-status">{post.status}</span></div>
@@ -237,5 +252,6 @@ export function AdminDashboard({
       <div className="admin-reference-list">{references.length === 0 ? <p className="admin-meta">Nenhuma referência cadastrada.</p> : references.map((reference) => <div className="admin-reference" key={reference.id}><div><a href={reference.sourceUrl ?? undefined} target="_blank" rel="noreferrer">{reference.sourceUrl ?? "Referência"}</a><p>{reference.content}</p><small>{formatDate(reference.createdAt)}</small></div><button type="button" className="admin-button" onClick={() => void removeReference(reference.id)}>Remover</button></div>)}</div>
     </section>
     {aiPost && <div className="admin-modal-backdrop" role="presentation"><div className="admin-modal" role="dialog" aria-modal="true" aria-labelledby="ai-title"><h2 id="ai-title">Solicitar alteração por IA</h2><p className="admin-subtitle">A IA irá reescrever o texto e gerar um novo criativo. O post continuará com o mesmo ID e data programada, mas voltará para aprovação.</p><p><strong>{aiPost.title}</strong></p><textarea className="admin-textarea" autoFocus value={aiFeedback} onChange={(event) => setAiFeedback(event.target.value)} placeholder="Ex.: deixe o gancho mais direto, aprofunde o trade-off técnico e troque a imagem para 3D minimalista, mantendo a paleta atual." /><div className="admin-actions"><button className="admin-button ai-button" type="button" onClick={() => void regenerate(aiPost)}>Enviar para IA + imagem</button><button className="admin-button" type="button" onClick={() => setAiPost(null)}>Fechar</button></div></div></div>}
+    <section className="admin-panel"><div className="admin-section-heading"><div><div className="admin-kicker">Aprendizado real</div><h2>Registrar métricas do LinkedIn</h2><p className="admin-subtitle">Copie os números exibidos em “Ver análises” no LinkedIn. Esses dados serão usados para comparar temas, formatos e horários.</p></div></div><form className="admin-edit" onSubmit={(event) => { event.preventDefault(); void saveMetrics(event.currentTarget); }}><select className="admin-input" value={metricsPostId} onChange={(event) => setMetricsPostId(event.target.value)}><option value="">Selecione um post publicado</option>{posts.filter((post) => post.status === "PUBLISHED").map((post) => <option value={post.id} key={post.id}>{post.title}</option>)}</select><input className="admin-input" name="impressions" type="number" min="0" placeholder="Impressões" value={metrics.impressions} onChange={(event) => setMetrics((current) => ({ ...current, impressions: event.target.value }))} /><input className="admin-input" name="reactions" type="number" min="0" placeholder="Reações" value={metrics.reactions} onChange={(event) => setMetrics((current) => ({ ...current, reactions: event.target.value }))} /><input className="admin-input" name="comments" type="number" min="0" placeholder="Comentários" value={metrics.comments} onChange={(event) => setMetrics((current) => ({ ...current, comments: event.target.value }))} /><input className="admin-input" name="shares" type="number" min="0" placeholder="Compartilhamentos" value={metrics.shares} onChange={(event) => setMetrics((current) => ({ ...current, shares: event.target.value }))} /><input className="admin-input" name="profileViews" type="number" min="0" placeholder="Visitas ao perfil (opcional)" value={metrics.profileViews} onChange={(event) => setMetrics((current) => ({ ...current, profileViews: event.target.value }))} /><button className="admin-button active" type="submit">Salvar métricas</button></form></section>
   </div></main>;
 }
