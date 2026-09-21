@@ -90,6 +90,12 @@ function deterministicWeeklyPosts(): GeneratedPost[] {
 }
 
 export async function generateNewPostBatch(options: BatchOptions = {}): Promise<string[]> {
+  const pendingApproval = await prisma.post.count({ where: { status: PostStatus.AWAITING_APPROVAL } });
+  const availableSlots = Math.max(0, 3 - pendingApproval);
+  if (availableSlots === 0) {
+    console.info("[content-engine] limite de aprovação atingido; geração ignorada", { pendingApproval, limit: 3 });
+    return [];
+  }
   const editorialLine = await prisma.editorialLine.findFirst({ orderBy: { createdAt: "asc" } });
   if (!editorialLine) throw new Error("Nenhuma EditorialLine cadastrada para orientar a geração.");
 
@@ -105,7 +111,7 @@ export async function generateNewPostBatch(options: BatchOptions = {}): Promise<
       aidaRules: editorialLine.aidaRules,
       cvCases: editorialLine.cvCases,
       language: editorialLine.language,
-    }, { ragSystemPrompt: humanPrompt(ragContext.systemPrompt) });
+    }, { ragSystemPrompt: humanPrompt(ragContext.systemPrompt), requestedCount: availableSlots as 1 | 2 | 3 });
   } catch (error) {
     console.error("[content-engine] geração de IA indisponível; usando lote editorial determinístico", {
       error: error instanceof Error ? error.message : String(error),
@@ -124,8 +130,9 @@ export async function generateNewPostBatch(options: BatchOptions = {}): Promise<
     if (orderedGenerated.length >= 3) break;
     if (!orderedGenerated.includes(post)) orderedGenerated.push(post);
   }
+  const postsForApproval = orderedGenerated.slice(0, availableSlots);
 
-  for (const [index, post] of orderedGenerated.entries()) {
+  for (const [index, post] of postsForApproval.entries()) {
     const generationKey = `${batchKey}:${index}`;
     const existing = await prisma.post.findUnique({ where: { generationKey } });
     if (existing) {

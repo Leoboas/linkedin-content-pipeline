@@ -177,13 +177,14 @@ function parseSingleGeneratedPost(value: unknown, index: number): GeneratedPost 
   };
 }
 
-function parseGeneratedPosts(value: unknown): GeneratedPost[] {
+function parseGeneratedPosts(value: unknown, requestedCount = 3): GeneratedPost[] {
   if (!value || typeof value !== "object" || !Array.isArray((value as { posts?: unknown }).posts)) {
     throw new Error("A resposta da Hugging Face não contém uma lista de posts.");
   }
   const rawPosts = (value as { posts: unknown[] }).posts;
-  if (rawPosts.length < 3 || rawPosts.length > 4) {
-    throw new Error(`A Hugging Face retornou ${rawPosts.length} posts; eram esperados 3 ou 4.`);
+  const minimum = requestedCount === 3 ? 3 : requestedCount;
+  if (rawPosts.length < minimum || rawPosts.length > (requestedCount === 3 ? 4 : requestedCount)) {
+    throw new Error(`A Hugging Face retornou ${rawPosts.length} posts; eram esperados ${requestedCount}.`);
   }
 
   return rawPosts.map((rawPost, index) => {
@@ -359,8 +360,9 @@ async function repairSinglePost(input: {
 
 export async function generateWeeklyPosts(
   context: EditorialContext,
-  options: { ragSystemPrompt?: string } = {},
+  options: { ragSystemPrompt?: string; requestedCount?: 1 | 2 | 3 } = {},
 ): Promise<GeneratedPost[]> {
+  const requestedCount = options.requestedCount ?? 3;
   const completion = await generateTextWithFallback({
     model: TEXT_MODEL,
     temperature: 0.75,
@@ -373,7 +375,7 @@ export async function generateWeeklyPosts(
           options.ragSystemPrompt,
           "Apply the RAG performance learnings: use a concrete hook in the first two lines, one real trade-off, authorized evidence and a conversational CTA. Never invent metrics.",
           "Write in natural Brazilian Portuguese with short paragraphs and a practical engineer/tech-leader voice. Ban generic AI phrasing, excessive hyphens and list-like filler.",
-          "For visual variety, use CAROUSEL_PDF for TOFU, SINGLE_IMAGE for MOFU and CAROUSEL_PDF for BOFU.",
+          "For visual variety, use CAROUSEL_PDF for TOFU, SINGLE_IMAGE for MOFU and CAROUSEL_PDF for BOFU. Keep one clear theme per post and do not mix unrelated topics.",
           "Você é um estrategista sênior de conteúdo B2B para LinkedIn.",
           "Crie posts em português do Brasil, salvo indicação contrária.",
           "Use AIDA: ATTENTION captura atenção com uma tensão real; INTEREST ensina; DESIRE mostra transformação e prova; ACTION contém um próximo passo claro.",
@@ -384,7 +386,7 @@ export async function generateWeeklyPosts(
       {
         role: "user",
         content: JSON.stringify({
-          task: "Crie exatamente 3 posts para a semana: um TOFU, um MOFU e um BOFU. Distribua as etapas AIDA entre eles.",
+          task: `Crie exatamente ${requestedCount} post${requestedCount === 1 ? "" : "s"} para aprovação. Quando houver 3, use um TOFU, um MOFU e um BOFU; quando houver menos, preserve um único tema por post. Distribua as etapas AIDA entre eles.`,
           editorialLine: context,
           contract: {
             funnelStage: ["ATTENTION", "INTEREST", "DESIRE", "ACTION"],
@@ -401,7 +403,8 @@ export async function generateWeeklyPosts(
   const content = completion.choices[0]?.message.content;
   if (!content) throw new Error("A Hugging Face retornou uma resposta vazia.");
   try {
-     const parsed = ensureConversationalCta(ensureVisualMix(parseGeneratedPosts(parseModelJson(content))));
+     const parsed = ensureConversationalCta(ensureVisualMix(parseGeneratedPosts(parseModelJson(content), requestedCount)));
+     if (requestedCount !== 3) return parsed;
      if (!needsEditorialRefinement(parsed)) {
        assertBatchQuality(parsed);
        return parsed;
