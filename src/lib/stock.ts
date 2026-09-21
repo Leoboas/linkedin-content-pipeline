@@ -28,13 +28,15 @@ export async function requestBatchIfStockIsLow(options: { force?: boolean } = {}
   // Deduplica disparos de cron/Inngest durante uma janela curta.
   const lockUntil = new Date(Date.now() - 15 * 60 * 1000);
   const locked = await prisma.editorialLine.updateMany({
-    where: {
-      id: editorialLine.id,
-      OR: [
-        { lastStockRefillAt: null },
-        { lastStockRefillAt: { lt: lockUntil } },
-      ],
-    },
+    where: options.force
+      ? { id: editorialLine.id }
+      : {
+          id: editorialLine.id,
+          OR: [
+            { lastStockRefillAt: null },
+            { lastStockRefillAt: { lt: lockUntil } },
+          ],
+        },
     data: { lastStockRefillAt: new Date() },
   });
   if (locked.count === 0) return { remaining, requested: false };

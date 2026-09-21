@@ -4,6 +4,7 @@ import { requestPostRefactor } from "@/lib/content-engine";
 import { isDashboardAuthorized } from "@/lib/dashboard-auth";
 import { prisma } from "@/lib/prisma";
 import { parseDateTimeLocalInBrazil } from "@/lib/dates";
+import { requestBatchIfStockIsLow } from "@/lib/stock";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -134,6 +135,7 @@ export async function DELETE(request: Request, context: RouteContext): Promise<N
       data: { status: PostStatus.CANCELLED },
     });
     if (result.count === 0) return jsonResponse({ id, status: PostStatus.CANCELLED });
+    await requestBatchIfStockIsLow({ force: true });
     return jsonResponse({ id, status: PostStatus.CANCELLED });
   } catch (error) {
     console.error("Falha ao cancelar post do dashboard:", error);

@@ -57,6 +57,7 @@ async function handleAgendaCallback(callback: TelegramCallbackQuery, match: RegE
   if (action === "cancel") {
     await prisma.post.updateMany({ where: { id: postId, status: { in: [PostStatus.APPROVED, PostStatus.SCHEDULED] } }, data: { status: PostStatus.CANCELLED, rejectionFeedback: "Cancelado pelo comando /agenda." } });
     if (chatId !== undefined && messageId !== undefined) await editTelegramMessage(chatId, messageId, "<b>🚫 Post cancelado.</b>", { inline_keyboard: [] });
+    await requestBatchIfStockIsLow({ force: true });
     return NextResponse.json({ ok: true, status: PostStatus.CANCELLED });
   }
   const days = action === "delay2" ? 2 : 1;
