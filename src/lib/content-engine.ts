@@ -1,9 +1,10 @@
-import { Prisma, FormatType, PostStatus } from "@prisma/client";
+import { Prisma, FormatType, PostStatus, QualityGateStatus } from "@prisma/client";
 import { inngest } from "@/inngest/client";
 import { predictEngagement } from "@/lib/analytics";
 import { generateWeeklyPosts as generateWithHuggingFace, regeneratePostWithFeedback, type GeneratedPost, type GeneratedSlide } from "@/lib/huggingface";
 import { buildImagePrompt } from "@/lib/image-prompt-engine";
 import { generateImageWithFallback } from "@/lib/creative-renderer";
+import { qualityReviewJson, reviewPostQuality } from "@/lib/content-reviewer";
 import { prisma } from "@/lib/prisma";
 import { buildRagContext, recordRejectionFeedback } from "@/lib/rag";
 import { getNextPipelineBaseDate, pillarOrder, scheduledDateForPost } from "@/lib/scheduling";
@@ -147,6 +148,13 @@ export async function generateNewPostBatch(options: BatchOptions = {}): Promise<
       negativeFeedback: ragContext.negativeFeedback,
       referenceInsights: ragContext.references,
     });
+    const qualityReview = await reviewPostQuality({
+      title: post.title,
+      textContent: post.textContent,
+      editorialPillar: post.editorialPillar,
+      slides: post.slides,
+      imagePrompt,
+    });
     const scheduledDate = scheduledDateForPost(index, post.editorialPillar, baseDate);
     const saved = await prisma.post.create({
       data: {
@@ -161,7 +169,11 @@ export async function generateNewPostBatch(options: BatchOptions = {}): Promise<
         slidesJson: post.slides as unknown as Prisma.InputJsonValue,
         engagementScore: prediction.score,
         engagementLabel: prediction.label,
-        status: PostStatus.AWAITING_APPROVAL,
+        status: qualityReview.status === QualityGateStatus.PASS ? PostStatus.AWAITING_APPROVAL : PostStatus.DRAFT,
+        qualityScore: qualityReview.score,
+        qualityStatus: qualityReview.status,
+        qualityReview: qualityReviewJson(qualityReview),
+        qualityReviewedAt: new Date(),
         scheduledFor: scheduledDate,
         scheduledDate,
       },
@@ -239,6 +251,14 @@ export async function refactorPostWithFeedback(
     });
     throw error;
   }
+  const qualityReview = await reviewPostQuality({
+    title: regenerated.title,
+    textContent: regenerated.textContent,
+    editorialPillar: regenerated.editorialPillar,
+    slides: regenerated.slides,
+    imagePrompt,
+    mediaUrl,
+  });
   const updated = await prisma.post.update({
     where: { id: postId },
     data: {
@@ -254,6 +274,10 @@ export async function refactorPostWithFeedback(
       engagementLabel: prediction.label,
       feedbackText: feedback,
       status: PostStatus.DRAFT,
+      qualityScore: qualityReview.score,
+      qualityStatus: qualityReview.status,
+      qualityReview: qualityReviewJson(qualityReview),
+      qualityReviewedAt: new Date(),
     },
   });
   if (options.sendTelegram !== false) {

@@ -1,5 +1,5 @@
 import { PDFDocument } from "pdf-lib";
-import { Prisma, PostStatus } from "@prisma/client";
+import { Prisma, PostStatus, QualityGateStatus } from "@prisma/client";
 import { inngest } from "@/inngest/client";
 import { isAiCapacityError } from "@/lib/ai-provider";
 import { getAppUrl } from "@/lib/app-url";
@@ -89,7 +89,7 @@ export const weeklyPostPipeline = inngest.createFunction(
     await step.run("send-telegram-approval", async () => {
       const posts = (await prisma.post.findMany({ where: { id: { in: renderedPostIds } } })).sort((left, right) => pillarOrder(left.editorialPillar) - pillarOrder(right.editorialPillar));
       for (const [index, post] of posts.entries()) {
-        if (post.status !== PostStatus.AWAITING_APPROVAL) continue;
+        if (post.status !== PostStatus.AWAITING_APPROVAL || post.qualityStatus !== QualityGateStatus.PASS) continue;
         if (index > 0) await new Promise((resolve) => setTimeout(resolve, 3000));
         await sendBatchToTelegram([post]);
       }
@@ -138,6 +138,10 @@ export const reformulatePostWithFeedback = inngest.createFunction(
       await step.run("send-regenerated-approval-card", async () => {
         const regenerated = await prisma.post.findUnique({ where: { id: data.postId } });
         if (!regenerated || regenerated.status !== PostStatus.DRAFT) throw new Error("Rascunho reformulado não encontrado para envio.");
+        if (regenerated.qualityStatus !== QualityGateStatus.PASS) {
+          console.warn("[inngest] reformulação retida pelo quality gate", { postId: data.postId, qualityStatus: regenerated.qualityStatus, qualityScore: regenerated.qualityScore });
+          return { postId: data.postId, sent: false, qualityStatus: regenerated.qualityStatus, qualityScore: regenerated.qualityScore };
+        }
         await sendPostForApproval(regenerated);
         return { postId: data.postId, sent: true };
       });

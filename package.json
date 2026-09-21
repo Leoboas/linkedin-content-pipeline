@@ -17,6 +17,7 @@
     "queue:cancel-scheduled": "node --experimental-strip-types scripts/cancel-scheduled-posts.ts",
     "generate:weekly-now": "tsx scripts/generate-weekly-now.ts",
     "audit:test": "tsx scripts/test-profile-audit.ts",
+    "quality:review": "tsx scripts/review-post-quality.ts",
     "test:image": "tsx scripts/test-premium-image.ts",
     "career:scan": "node scripts/career-scan.mjs",
     "jobs:cleanup-telegram": "node --experimental-strip-types scripts/cleanup-telegram-placeholders.ts",

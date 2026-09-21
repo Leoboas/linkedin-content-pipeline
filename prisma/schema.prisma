@@ -65,6 +65,12 @@ enum ResumeDraftStatus {
   ARCHIVED
 }
 
+enum QualityGateStatus {
+  PASS
+  NEEDS_REVISION
+  BLOCKED
+}
+
 model EditorialLine {
   id          String   @id @default(uuid()) @db.Uuid
   name        String
@@ -98,6 +104,10 @@ model Post {
   linkedinPostId  String?
   engagementScore Float?
   engagementLabel String?
+  qualityScore Float?
+  qualityStatus QualityGateStatus?
+  qualityReview Json?
+  qualityReviewedAt DateTime?
   feedbackText    String?        @db.Text
   rejectionFeedback String?      @db.Text
   createdAt       DateTime       @default(now())
@@ -108,6 +118,7 @@ model Post {
   @@index([status, scheduledFor])
   @@index([editorialLineId])
   @@index([editorialLineId, editorialPillar, status, engagementScore])
+  @@index([qualityStatus, qualityScore])
 }
 
 model PostMetric {
