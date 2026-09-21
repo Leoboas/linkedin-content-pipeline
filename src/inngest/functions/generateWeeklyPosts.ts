@@ -50,14 +50,14 @@ async function renderCarouselPdf(postId: string, title: string, slides: Generate
   const pdf = await PDFDocument.create();
   const appUrl = getAppUrl();
   for (const [index, slide] of slides.entries()) {
-    const params = new URLSearchParams({ title: slide.title, content: JSON.stringify(slide.bullets), page: String(index + 1), pageCount: String(slides.length) });
+    const params = new URLSearchParams({ title: slide.title, content: JSON.stringify(slide.bullets), page: String(index + 1), pageCount: String(slides.length), layout: "architecture", pillar: "TECH · DATA · GROWTH" });
     if (slide.code) params.set("code", slide.code);
     if (slide.metrics) params.set("metrics", JSON.stringify(slide.metrics));
     const response = await fetch(`${appUrl}/api/og/slide?${params.toString()}`, { cache: "no-store" });
     if (!response.ok) throw new Error(`Falha ao renderizar lâmina ${index + 1} do post ${postId}: ${response.status}`);
     const image = await pdf.embedPng(await response.arrayBuffer());
-    const page = pdf.addPage([1080, 1350]);
-    page.drawImage(image, { x: 0, y: 0, width: 1080, height: 1350 });
+    const page = pdf.addPage([1600, 900]);
+    page.drawImage(image, { x: 0, y: 0, width: 1600, height: 900 });
   }
   return uploadPublicAsset(`linkedin-posts/${postId}-${encodeURIComponent(title)}.pdf`, await pdf.save(), "application/pdf");
 }

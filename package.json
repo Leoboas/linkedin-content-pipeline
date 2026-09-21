@@ -15,6 +15,7 @@
     "case:nasa": "node --experimental-strip-types scripts/update-nasa-case.ts",
     "queue:reset": "node --experimental-strip-types scripts/reset-queue.ts",
     "queue:cancel-scheduled": "node --experimental-strip-types scripts/cancel-scheduled-posts.ts",
+    "posts:dedupe": "node --experimental-strip-types scripts/dedupe-posts.ts",
     "generate:weekly-now": "tsx scripts/generate-weekly-now.ts",
     "audit:test": "tsx scripts/test-profile-audit.ts",
     "quality:review": "tsx scripts/review-post-quality.ts",
