@@ -1,4 +1,5 @@
 import catalog from "../../data/linkedin-skills.json";
+import { LINKEDIN_POSITIONING } from "../../config/linkedin-positioning";
 
 type SkillCatalog = { skills: Record<string, string[]> };
 
@@ -22,6 +23,14 @@ const aliasEntries = Object.entries(skillCatalog.skills).flatMap(([canonical, al
 ]);
 
 const aliasMap = new Map(aliasEntries.map(([alias, canonical]) => [fold(alias), canonical]));
+
+// Skills prioritárias do posicionamento que podem não existir no catálogo legado.
+const positioningAliases = new Map(
+  LINKEDIN_POSITIONING.prioritySkills.flatMap((skill) => {
+    const aliases = [skill, skill.toLowerCase(), skill.replace(/\s*\([^)]*\)/g, "")];
+    return aliases.map((alias) => [fold(alias), skill] as const);
+  }),
+);
 
 function containsAlias(text: string, alias: string): boolean {
   if (alias.length <= 3) return new RegExp(`(^|\\s)${alias.replace(/[+.#]/g, "\\$&")}(?=\\s|$)`, "i").test(text);
@@ -52,7 +61,7 @@ export function normalizeSkills(skills: string[]): string[] {
       if (!normalized.includes(recovered)) normalized.push(recovered);
       continue;
     }
-    const direct = aliasMap.get(key);
+    const direct = aliasMap.get(key) ?? positioningAliases.get(key);
     const matches = direct
       ? [direct]
       : [...aliasMap.entries()]

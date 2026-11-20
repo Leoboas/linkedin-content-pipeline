@@ -5,6 +5,8 @@ import { isDashboardAuthorized } from "@/lib/dashboard-auth";
 import { prisma } from "@/lib/prisma";
 import { parseDateTimeLocalInBrazil } from "@/lib/dates";
 import { requestBatchIfStockIsLow } from "@/lib/stock";
+import { createPostTextVersion, invalidateApprovalForCreativeChange } from "@/lib/post-versioning";
+import { Prisma, QualityGateStatus } from "@prisma/client";
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -98,12 +100,36 @@ async function updatePost(request: Request, context: RouteContext): Promise<Next
   if (Object.keys(data).length === 0) return errorResponse("Nenhuma alteração enviada.", 400);
 
   try {
-    const current = await prisma.post.findUnique({ where: { id }, select: { status: true } });
+    const current = await prisma.post.findUnique({ where: { id } });
     if (!current) return errorResponse("Post não encontrado.", 404);
     if (current.status === PostStatus.PUBLISHED || current.status === PostStatus.PUBLISHING) {
       return errorResponse("Posts publicados ou em publicação são somente leitura.", 409);
     }
-    const updated = await prisma.post.update({ where: { id }, data });
+    const textChanged = (data.title !== undefined && data.title !== current.title)
+      || (data.textContent !== undefined && data.textContent !== current.textContent);
+    const creativeChanged = data.imagePrompt !== undefined && data.imagePrompt !== current.imagePrompt;
+    const updated = await prisma.$transaction(async (tx) => {
+      if (textChanged) {
+        await createPostTextVersion(tx, {
+          postId: id,
+          snapshot: {
+            title: data.title ?? current.title,
+            textContent: data.textContent ?? current.textContent,
+            slidesJson: current.slidesJson as Prisma.InputJsonValue | null,
+            imagePrompt: data.imagePrompt !== undefined ? data.imagePrompt : current.imagePrompt,
+            mediaUrl: current.mediaUrl,
+            language: current.language,
+          },
+          reason: "dashboard-manual-edit",
+        });
+      } else if (creativeChanged) {
+        await invalidateApprovalForCreativeChange(tx, { postId: id, reason: "O prompt visual foi alterado no Dashboard." });
+      }
+      return tx.post.update({ where: { id }, data: {
+        ...data,
+        ...(textChanged || creativeChanged ? { status: PostStatus.DRAFT, qualityStatus: QualityGateStatus.NEEDS_REVISION, qualityScore: 0, approvedCreativeBriefId: null } : {}),
+      } });
+    });
     return jsonResponse(updated);
   } catch (error) {
     console.error("Falha ao atualizar post do dashboard:", error);

@@ -1,12 +1,18 @@
 import { generateImageZeroCost } from "@/lib/image-prompt-engine";
 import { generatePremiumPostImage } from "@/lib/premium-image-engine";
 import { uploadPublicAsset } from "@/lib/storage";
+import type { VisualFormat } from "../../config/creative-direction";
+import { getAppUrl } from "@/lib/app-url";
+import type { ContentBrief } from "@/lib/creative-brief";
 
 interface SingleImageInput {
   postId: string;
   title: string;
   editorialPillar?: string;
   imagePrompt: string;
+  visualFormat?: VisualFormat;
+  contentBrief?: ContentBrief;
+  overlayTitle?: string;
 }
 
 export type ImageAssetInput = SingleImageInput;
@@ -20,15 +26,21 @@ export async function generateSingleImageAsset(input: SingleImageInput): Promise
     input.title,
     input.editorialPillar ?? "TECH · DATA · GROWTH",
     input.imagePrompt,
+    input.visualFormat,
   );
   const safeName = encodeURIComponent(input.title).slice(0, 120);
   const extension = generated.contentType === "image/jpeg" ? "jpg" : "png";
-
-  return uploadPublicAsset(
+  const baseUrl = await uploadPublicAsset(
     `linkedin-posts/${input.postId}-${safeName}-premium.${extension}`,
     generated.buffer,
     generated.contentType,
   );
+  if (generated.provider === "satori" || !input.overlayTitle?.trim()) return baseUrl;
+
+  const params = new URLSearchParams({ background: baseUrl, title: input.overlayTitle.slice(0, 72), pillar: input.editorialPillar ?? "TECH · DATA · GROWTH", format: input.visualFormat ?? "editorial-cover", v: String(Date.now()) });
+  const response = await fetch(`${getAppUrl()}/api/og/creative?${params.toString()}`, { cache: "no-store", signal: AbortSignal.timeout(30_000) });
+  if (!response.ok) throw new Error(`Composição tipográfica retornou ${response.status}.`);
+  return uploadPublicAsset(`linkedin-posts/${input.postId}-${safeName}-composed.png`, Buffer.from(await response.arrayBuffer()), "image/png");
 }
 
 /**

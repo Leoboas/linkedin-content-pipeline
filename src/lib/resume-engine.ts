@@ -52,10 +52,11 @@ function parseJson(value: string): Record<string, unknown> {
 }
 
 function resumeContent(value: Record<string, unknown>): ResumeContent {
+  const usedSkills = new Set<string>();
   return {
     headline: text(value.headline),
     summary: text(value.summary),
-    skills: objectList(value.skills).map((item) => ({ category: text(item.category) || "Core Skills", items: normalizeSkills(stringList(item.items)) })),
+    skills: objectList(value.skills).map((item) => ({ category: text(item.category) || "Core Skills", items: normalizeSkills(stringList(item.items)).filter((skill) => { if (usedSkills.has(skill)) return false; usedSkills.add(skill); return true; }) })).filter((group) => group.items.length > 0),
     experience: objectList(value.experience).map((item) => ({ role: text(item.role), company: text(item.company), period: text(item.period), bullets: stringList(item.bullets) })).filter((item) => item.role || item.company),
     projects: objectList(value.projects).map((item) => ({ name: text(item.name), description: text(item.description), stack: normalizeSkills(stringList(item.stack)) })).filter((item) => item.name || item.description),
     education: stringList(value.education),
@@ -132,6 +133,8 @@ async function generateContent(input: {
             "Use somente fatos, cargos, empresas, datas, projetos, métricas e tecnologias presentes no perfil ou no contexto fornecido. Nunca invente experiência.",
             "Priorize evidência: ação técnica ou de liderança, contexto do problema e resultado verificável. Não use emojis, tabelas, colunas, barras de proficiência ou frases vazias.",
             "Elimine vícios de IA, clichês corporativos e repetições. O currículo deve ser legível por ATS e por uma recrutadora humana.",
+            "Diferencie requisito da vaga de evidência do candidato: uma tecnologia exigida pela vaga só pode entrar como competência do candidato se estiver comprovada no perfil, nos documentos ou nos projetos fornecidos. Caso contrário, liste-a em keywords/missingKeywords, nunca como experiência inventada.",
+            "Para vagas de avaliação de IA, destaque somente evidências reais de Python/TypeScript, pipelines, dados, escrita técnica, qualidade ou IA. Não transforme palavras da vaga em cargos ou realizações do candidato.",
             "Estrutura obrigatória JSON: {headline,summary,skills:[{category,items}],experience:[{role,company,period,bullets}],projects:[{name,description,stack}],education:string[],languages:string[],keywords:string[]}.",
             "Template escolhido: " + template.label + ". Regras: " + template.rules.join(" "),
           ].join(" "),

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { dateKeyInBrazil, formatDateInBrazil, formatDateTimeLocalInBrazil, parseDateTimeLocalInBrazil } from "@/lib/dates";
+import { AdminNav } from "./AdminNav";
 
 export interface DashboardPost {
   id: string;
@@ -26,6 +27,8 @@ export interface DashboardReference {
 
 type View = "list" | "month" | "week";
 type Toast = { text: string; kind: "success" | "error" };
+type LanguageDistribution = { "pt-BR": number; "en-US": number };
+type CreativePackage = { markdown: string; chatGptPrompt: string; caption: string; mediaUrl: string | null; formatType: string; error?: string };
 
 const statusClass: Record<string, string> = {
   APPROVED: "approved", SCHEDULED: "scheduled", DRAFT: "draft", PUBLISHED: "published",
@@ -45,9 +48,11 @@ function isExpired(post: DashboardPost): boolean {
 export function AdminDashboard({
   initialPosts,
   initialReferences,
+  initialEditorialPlan,
 }: {
   initialPosts: DashboardPost[];
   initialReferences: DashboardReference[];
+  initialEditorialPlan: { postsPerWeek: number; languageDistribution: LanguageDistribution };
 }) {
   const [posts, setPosts] = useState(initialPosts);
   const [references, setReferences] = useState(initialReferences);
@@ -62,6 +67,13 @@ export function AdminDashboard({
   const [metricsPostId, setMetricsPostId] = useState("");
   const [metrics, setMetrics] = useState({ impressions: "", reactions: "", comments: "", shares: "", profileViews: "" });
   const [toast, setToast] = useState<Toast | null>(null);
+  const [generating, setGenerating] = useState(false);
+  const [editorialPlan, setEditorialPlan] = useState(initialEditorialPlan);
+  const [savingEditorialPlan, setSavingEditorialPlan] = useState(false);
+  const [studioPost, setStudioPost] = useState<string | null>(null);
+  const [studioPostId, setStudioPostId] = useState("");
+  const [creativePackage, setCreativePackage] = useState<CreativePackage | null>(null);
+  const [loadingCreativePackage, setLoadingCreativePackage] = useState(false);
 
   const visiblePosts = useMemo(() => posts.filter((post) => (showBacklog ? backlogStatuses : activeStatuses).has(post.status)), [posts, showBacklog]);
   const monthCells = useMemo(() => {
@@ -201,6 +213,18 @@ export function AdminDashboard({
     finally { setPublishing(null); }
   }
 
+  async function uploadMedia(post: DashboardPost, file: File): Promise<void> {
+    const form = new FormData();
+    form.set("file", file);
+    try {
+      const response = await fetch("/api/posts/" + post.id + "/media", { method: "POST", headers: authHeaders(), body: form });
+      const payload = await response.json().catch(() => null) as { mediaUrl?: string; status?: string; qualityStatus?: string; telegramCardSent?: boolean; error?: string } | null;
+      if (!response.ok || !payload?.mediaUrl) { notify(payload?.error ?? "Não foi possível substituir a mídia.", "error"); return; }
+      setPosts((current) => current.map((item) => item.id === post.id ? { ...item, mediaUrl: payload.mediaUrl ?? null, status: payload.status ?? item.status } : item));
+      notify(payload.qualityStatus === "PASS" ? payload.telegramCardSent ? "Imagem inspecionada; novo card enviado ao Telegram para aprovação." : "Imagem inspecionada. O card não chegou ao Telegram; reenvie pela ação de aprovação." : "Imagem associada, mas o post continua bloqueado pelo quality gate.", payload.qualityStatus === "PASS" ? "success" : "error");
+    } catch { notify("Falha de rede ao enviar a mídia.", "error"); }
+  }
+
   async function addReference(form: HTMLFormElement) {
     const data = new FormData(form);
     const sourceUrl = String(data.get("sourceUrl") ?? "").trim();
@@ -232,17 +256,69 @@ export function AdminDashboard({
     const data = new FormData(form);
     try {
       const response = await fetch(`/api/posts/${metricsPostId}/metrics`, { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() }, body: JSON.stringify(Object.fromEntries(data.entries())) });
-      const payload = await response.json() as { error?: string; engagementScore?: number | null };
+      const payload = await response.json() as { error?: string; interactionRate?: number | null };
       if (!response.ok) { notify(payload.error ?? "Não foi possível salvar as métricas.", "error"); return; }
-      setPosts((current) => current.map((post) => post.id === metricsPostId ? { ...post, engagementScore: payload.engagementScore ?? post.engagementScore, engagementLabel: "Métrica real" } : post));
+      void payload.interactionRate;
       setMetrics({ impressions: "", reactions: "", comments: "", shares: "", profileViews: "" });
-      notify("Métricas salvas e score real atualizado.");
+      notify("Snapshot de métricas salvo. O score projetado do post não foi alterado.");
     } catch { notify("Falha de rede ao salvar métricas.", "error"); }
+  }
+
+  async function generateBatch() {
+    setGenerating(true);
+    try {
+      const today = formatDateTimeLocalInBrazil(new Date()).slice(0, 10);
+      const monday = parseDateTimeLocalInBrazil(`${today}T00:00`);
+      const weekday = new Date(`${today}T12:00:00Z`).getUTCDay();
+      monday.setUTCDate(monday.getUTCDate() - ((weekday + 6) % 7) + 7);
+      const weekStart = formatDateTimeLocalInBrazil(monday).slice(0, 10);
+      const response = await fetch("/api/posts/generate", { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() }, body: JSON.stringify({ weekStart }) });
+      const payload = await response.json().catch(() => null) as { error?: string } | null;
+      if (!response.ok) throw new Error(payload?.error ?? `Falha ao enfileirar lote (${response.status}).`);
+      notify(`Calendário de ${weekStart} enfileirado. Só slots novos serão criados; posts existentes não voltam ao Telegram.`);
+    } catch (error) { notify(error instanceof Error ? error.message : "Falha ao gerar lote.", "error"); }
+    finally { setGenerating(false); }
+  }
+
+  async function saveEditorialPlan() {
+    setSavingEditorialPlan(true);
+    try {
+      const response = await fetch("/api/admin/editorial-plan", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify(editorialPlan),
+      });
+      const payload = await response.json() as { error?: string; postsPerWeek?: number; languageDistribution?: LanguageDistribution };
+      if (!response.ok || !payload.languageDistribution || !payload.postsPerWeek) throw new Error(payload.error ?? "Não foi possível salvar o planejamento.");
+      setEditorialPlan({ postsPerWeek: payload.postsPerWeek, languageDistribution: payload.languageDistribution });
+      notify("Distribuição de idioma salva. Ela será aplicada aos próximos lotes.");
+    } catch (error) { notify(error instanceof Error ? error.message : "Falha ao salvar planejamento.", "error"); }
+    finally { setSavingEditorialPlan(false); }
+  }
+
+  async function openCreativeStudio(post: DashboardPost) {
+    setStudioPost(post.id);
+    setCreativePackage(null);
+    setLoadingCreativePackage(true);
+    try {
+      const response = await fetch(`/api/posts/${post.id}/creative-package`, { headers: authHeaders(), cache: "no-store" });
+      const payload = await response.json() as CreativePackage;
+      if (!response.ok) throw new Error(payload.error ?? `Falha ao preparar pacote (${response.status}).`);
+      setCreativePackage(payload);
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Não foi possível abrir o Creative Studio.", "error");
+      setStudioPost(null);
+    } finally { setLoadingCreativePackage(false); }
+  }
+
+  async function copyCreativeText(value: string, label: string) {
+    try { await navigator.clipboard.writeText(value); notify(`${label} copiado.`); }
+    catch { notify("Não foi possível acessar a área de transferência neste navegador.", "error"); }
   }
 
   function eventsFor(day: string): DashboardPost[] { return visiblePosts.filter((post) => dateKey(post.scheduledDate) === day); }
 
-  return <main className="admin-shell"><div className="admin-container">
+  return <main className="admin-shell"><div className="admin-container"><AdminNav current="agenda" />
     {toast && <div className={`admin-toast ${toast.kind}`} role="status">{toast.text}</div>}
     <header className="admin-header"><div><div className="admin-kicker">Autonomous LinkedIn Content Engine</div><h1 className="admin-title">Agenda editorial</h1><p className="admin-subtitle">Acompanhe aprovação, publicação, aprendizado e melhoria assistida por IA.</p></div></header>
     <section className="admin-panel">
@@ -250,12 +326,23 @@ export function AdminDashboard({
         {["list", "month", "week"].map((item) => <button key={item} className={`admin-button ${view === item ? "active" : ""}`} onClick={() => setView(item as View)}>{item === "list" ? "Timeline" : item === "month" ? "Calendário mensal" : "Semana atual"}</button>)}
         <button className={`admin-button ${!showBacklog ? "active" : ""}`} onClick={() => setShowBacklog(false)}>Ativos</button>
         <button className={`admin-button ${showBacklog ? "active" : ""}`} onClick={() => setShowBacklog(true)}>Backlog</button>
-        <button className="admin-button" onClick={() => { void fetch("/api/auth/logout", { method: "POST" }).then(() => window.location.assign("/admin")); }}>Sair</button>
+        <button className="admin-button active" disabled={generating} onClick={() => void generateBatch()}>{generating ? "Enfileirando..." : "Gerar calendário da próxima semana"}</button><button className="admin-button" onClick={() => { void fetch("/api/auth/logout", { method: "POST" }).then(() => window.location.assign("/admin")); }}>Sair</button>
       </div>
+      <section className="admin-card" aria-labelledby="language-plan-title">
+        <div className="admin-kicker">Planejamento multilíngue</div><h2 id="language-plan-title">Idioma dos próximos posts</h2>
+        <div className="admin-actions">
+          <label className="admin-label">Posts por semana<select className="admin-input" value={editorialPlan.postsPerWeek} onChange={(event) => setEditorialPlan((current) => { const postsPerWeek = Number(event.target.value); const en = Math.min(current.languageDistribution["en-US"], postsPerWeek); return { postsPerWeek, languageDistribution: { "pt-BR": postsPerWeek - en, "en-US": en } }; })}><option value={3}>3 posts</option><option value={4}>4 posts</option></select></label>
+          <label className="admin-label">Português<select className="admin-input" value={editorialPlan.languageDistribution["pt-BR"]} onChange={(event) => setEditorialPlan((current) => { const pt = Number(event.target.value); return { ...current, languageDistribution: { "pt-BR": pt, "en-US": current.postsPerWeek - pt } }; })}>{Array.from({ length: editorialPlan.postsPerWeek + 1 }, (_, count) => <option key={count} value={count}>{count} post(s)</option>)}</select></label>
+          <label className="admin-label">Inglês<select className="admin-input" value={editorialPlan.languageDistribution["en-US"]} onChange={(event) => setEditorialPlan((current) => { const en = Number(event.target.value); return { ...current, languageDistribution: { "pt-BR": current.postsPerWeek - en, "en-US": en } }; })}>{Array.from({ length: editorialPlan.postsPerWeek + 1 }, (_, count) => <option key={count} value={count}>{count} post(s)</option>)}</select></label>
+          <button className="admin-button active" disabled={savingEditorialPlan} onClick={() => void saveEditorialPlan()}>{savingEditorialPlan ? "Salvando…" : "Salvar idiomas"}</button>
+        </div>
+        <p className="admin-meta">As quantidades devem somar a frequência semanal. O padrão permanece em português; o inglês só entra quando configurado explicitamente. Posts existentes não são traduzidos nem alterados.</p>
+      </section>
       {view === "list" && <div className="admin-list">{visiblePosts.map((post) => <article className={`admin-card ${statusClass[post.status] ?? ""}`} key={post.id}>
         <div className="admin-card-head"><div><strong>{post.title}</strong><div className="admin-meta">{post.editorialPillar} · {formatDate(post.scheduledDate)} · {post.engagementScore === null ? "sem score" : `${Math.round(post.engagementScore)}/100 (${post.engagementLabel ?? ""})`}</div></div><span className="admin-status">{post.status}</span></div>
         {isExpired(post) && <div className="admin-expired">⚠️ Data expirada — reagende ou cancele este post.</div>}
         {post.mediaUrl && <div className="admin-media">{post.mediaUrl.toLowerCase().includes(".pdf") ? <a href={post.mediaUrl} target="_blank" rel="noreferrer">📄 Abrir PDF do carrossel</a> : <img src={post.mediaUrl} alt={`Criativo de ${post.title}`} loading="lazy" />}</div>}
+        {post.status !== "PUBLISHED" && post.status !== "CANCELLED" && <label className="admin-button">🖼️ Substituir imagem<input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadMedia(post, file); event.currentTarget.value = ""; }} /></label>}
         {editing === post.id ? <form className="admin-edit" onSubmit={(event) => { event.preventDefault(); void save(post, event.currentTarget); }}><input className="admin-input" name="title" defaultValue={post.title} /><textarea className="admin-textarea" name="textContent" defaultValue={post.textContent} /><textarea className="admin-textarea" name="imagePrompt" placeholder="Prompt da imagem" defaultValue={post.imagePrompt ?? ""} /><label className="admin-label">Data e hora de publicação (reagendamento)<input className="admin-input" name="scheduledDate" type="datetime-local" defaultValue={post.scheduledDate.slice(0, 16)} /></label><div className="admin-actions"><button className="admin-button active" type="submit">Salvar alterações</button><button className="admin-button" type="button" onClick={() => setEditing(null)}>Cancelar edição</button></div></form> : <div className="admin-actions">{post.status !== "PUBLISHED" && post.status !== "CANCELLED" && <><button className="admin-button" disabled={post.status === "REGENERATING"} onClick={() => setEditing(post.id)}>{isExpired(post) ? "Reagendar" : "Editar"}</button><button className="admin-button ai-button" disabled={post.status === "REGENERATING"} onClick={() => { setAiPost(post); setAiFeedback(""); }}>{post.status === "REGENERATING" ? "IA processando…" : "✨ Solicitar alteração por IA"}</button><button className="admin-button danger-button" disabled={post.status === "REGENERATING"} onClick={() => void cancelPost(post)}>Cancelar post</button></>}</div>}
       {isExpired(post) && ["APPROVED", "SCHEDULED"].includes(post.status) && <div className="admin-actions"><button className="admin-button publish-button" disabled={publishing === post.id} onClick={() => void publishNow(post)}>{publishing === post.id ? "Publicando…" : "🚀 Publicar agora"}</button></div>}</article>)}</div>}
       {view === "month" && <><div className="admin-toolbar"><button className="admin-button" onClick={() => setMonth((value) => { const date = new Date(`${value}-01T00:00:00`); date.setMonth(date.getMonth() - 1); return date.toISOString().slice(0, 7); })}>←</button><strong>{month}</strong><button className="admin-button" onClick={() => setMonth((value) => { const date = new Date(`${value}-01T00:00:00`); date.setMonth(date.getMonth() + 1); return date.toISOString().slice(0, 7); })}>→</button></div><div className="admin-grid">{weekdays.map((day) => <div className="admin-weekday" key={day}>{day}</div>)}{monthCells.map((day, index) => { const key = day === null ? `empty-${index}` : `${month}-${String(day).padStart(2, "0")}`; return <div className={`admin-day ${day === null ? "muted" : ""}`} key={key}><div className="admin-day-number">{day ?? ""}</div>{day !== null && eventsFor(key).map((post) => <div className={`admin-event ${statusClass[post.status] ?? ""}`} key={post.id}><strong>{post.editorialPillar} · {post.title}</strong>{post.status} · {formatDate(post.scheduledDate)}</div>)}</div>; })}</div></>}
@@ -267,5 +354,7 @@ export function AdminDashboard({
     </section>
     {aiPost && <div className="admin-modal-backdrop" role="presentation"><div className="admin-modal" role="dialog" aria-modal="true" aria-labelledby="ai-title"><h2 id="ai-title">Solicitar alteração por IA</h2><p className="admin-subtitle">A IA irá reescrever o texto e gerar um novo criativo. O post continuará com o mesmo ID e data programada, mas voltará para aprovação.</p><p><strong>{aiPost.title}</strong></p><textarea className="admin-textarea" autoFocus value={aiFeedback} onChange={(event) => setAiFeedback(event.target.value)} placeholder="Ex.: deixe o gancho mais direto, aprofunde o trade-off técnico e troque a imagem para 3D minimalista, mantendo a paleta atual." /><div className="admin-actions"><button className="admin-button ai-button" type="button" onClick={() => void regenerate(aiPost)}>Enviar para IA + imagem</button><button className="admin-button" type="button" onClick={() => setAiPost(null)}>Fechar</button></div></div></div>}
     <section className="admin-panel"><div className="admin-section-heading"><div><div className="admin-kicker">Aprendizado real</div><h2>Registrar métricas do LinkedIn</h2><p className="admin-subtitle">Copie os números exibidos em “Ver análises” no LinkedIn. Esses dados serão usados para comparar temas, formatos e horários.</p></div></div><form className="admin-edit" onSubmit={(event) => { event.preventDefault(); void saveMetrics(event.currentTarget); }}><select className="admin-input" value={metricsPostId} onChange={(event) => setMetricsPostId(event.target.value)}><option value="">Selecione um post publicado</option>{posts.filter((post) => post.status === "PUBLISHED").map((post) => <option value={post.id} key={post.id}>{post.title}</option>)}</select><input className="admin-input" name="impressions" type="number" min="0" placeholder="Impressões" value={metrics.impressions} onChange={(event) => setMetrics((current) => ({ ...current, impressions: event.target.value }))} /><input className="admin-input" name="reactions" type="number" min="0" placeholder="Reações" value={metrics.reactions} onChange={(event) => setMetrics((current) => ({ ...current, reactions: event.target.value }))} /><input className="admin-input" name="comments" type="number" min="0" placeholder="Comentários" value={metrics.comments} onChange={(event) => setMetrics((current) => ({ ...current, comments: event.target.value }))} /><input className="admin-input" name="shares" type="number" min="0" placeholder="Compartilhamentos" value={metrics.shares} onChange={(event) => setMetrics((current) => ({ ...current, shares: event.target.value }))} /><input className="admin-input" name="profileViews" type="number" min="0" placeholder="Visitas ao perfil (opcional)" value={metrics.profileViews} onChange={(event) => setMetrics((current) => ({ ...current, profileViews: event.target.value }))} /><button className="admin-button active" type="submit">Salvar métricas</button></form></section>
+    <section className="admin-panel"><div className="admin-kicker">Pacote de revisão externa</div><h2>ChatGPT Creative Studio</h2><p className="admin-subtitle">Exporte a legenda, as evidências correspondentes e um briefing visual compacto. Este recurso não gera, agenda nem publica conteúdo.</p><div className="admin-actions"><select className="admin-input" value={studioPostId} onChange={(event) => setStudioPostId(event.target.value)}><option value="">Selecione um post</option>{posts.map((post) => <option key={post.id} value={post.id}>{post.title}</option>)}</select><button className="admin-button active" disabled={!studioPostId || loadingCreativePackage} onClick={() => { const selected = posts.find((post) => post.id === studioPostId); if (selected) void openCreativeStudio(selected); }}>{loadingCreativePackage ? "Preparando…" : "Abrir pacote"}</button></div></section>
+    {studioPost && <div className="admin-modal-backdrop" role="presentation"><section className="admin-modal creative-studio-modal" role="dialog" aria-modal="true" aria-labelledby="creative-studio-title"><div className="admin-kicker">Pacote exportável</div><h2 id="creative-studio-title">ChatGPT Creative Studio</h2>{loadingCreativePackage ? <p>Preparando contexto e evidências…</p> : creativePackage ? <><p className="admin-subtitle">Revise a copy, as evidências e a direção visual. O pacote não publica nem altera o post.</p>{creativePackage.mediaUrl && (creativePackage.formatType === "CAROUSEL_PDF" ? <a href={creativePackage.mediaUrl} target="_blank" rel="noreferrer">Abrir PDF atual do carrossel</a> : <img className="creative-studio-preview" src={creativePackage.mediaUrl} alt="Criativo atual do post" />)}<div className="admin-actions"><button className="admin-button active" onClick={() => void copyCreativeText(creativePackage.chatGptPrompt, "Prompt visual")}>Copiar prompt visual</button><button className="admin-button" onClick={() => void copyCreativeText(creativePackage.markdown, "Pacote completo")}>Copiar pacote</button><button className="admin-button" onClick={() => void copyCreativeText(creativePackage.caption, "Legenda")}>Copiar legenda</button></div><details><summary>Briefing e fontes</summary><pre className="creative-studio-brief">{creativePackage.markdown}</pre></details></> : <p>Não foi possível carregar o pacote.</p>}<div className="admin-actions"><button className="admin-button" onClick={() => { setStudioPost(null); setCreativePackage(null); }}>Fechar</button></div></section></div>}
   </div></main>;
 }

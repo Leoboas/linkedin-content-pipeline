@@ -1,12 +1,34 @@
 import type { FormatType, Post } from "@prisma/client";
+import { fetchLinkedInTracked } from "@/lib/linkedin-api-budget";
 
 const LINKEDIN_REST_API = "https://api.linkedin.com/rest";
 const LINKEDIN_VERSION = process.env.LINKEDIN_VERSION ?? "202606";
 
 export interface LinkedInMemberMetric {
   metricType: string;
-  count: number;
+  count: number | null;
 }
+
+export function parseLinkedInMemberMetricResponse(
+  payload: { elements?: Array<{ count?: number; metricType?: Record<string, string> | string }> },
+  requestedMetric: string,
+): LinkedInMemberMetric {
+  const element = payload.elements?.find((item) => item.metricType !== undefined) ?? payload.elements?.[0];
+  const metricType = typeof element?.metricType === "string"
+    ? element.metricType
+    : element?.metricType && typeof element.metricType === "object"
+      ? Object.values(element.metricType)[0]
+      : requestedMetric;
+  const rawCount = element?.count;
+  const count = typeof rawCount === "number" && Number.isSafeInteger(rawCount) && rawCount >= 0 ? rawCount : null;
+  return { metricType: metricType ?? requestedMetric, count };
+}
+
+const MEMBER_POST_METRICS = [
+  "IMPRESSION", "MEMBERS_REACHED", "REACTION", "COMMENT", "RESHARE",
+  "POST_SAVE", "POST_SEND", "LINK_CLICKS", "PREMIUM_CTA_CLICKS",
+  "FOLLOWER_GAINED_FROM_CONTENT", "PROFILE_VIEW_FROM_CONTENT",
+] as const;
 
 function requireLinkedInConfig(): { accessToken: string; personUrn: string } {
   const accessToken = process.env.LINKEDIN_ACCESS_TOKEN;
@@ -19,7 +41,7 @@ function requireLinkedInConfig(): { accessToken: string; personUrn: string } {
 
 async function linkedinRestFetch(path: string, init: RequestInit): Promise<Response> {
   const { accessToken } = requireLinkedInConfig();
-  return fetch(`${LINKEDIN_REST_API}${path}`, {
+  return fetchLinkedInTracked(`${LINKEDIN_REST_API}${path}`, {
     ...init,
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -27,7 +49,7 @@ async function linkedinRestFetch(path: string, init: RequestInit): Promise<Respo
       "Linkedin-Version": LINKEDIN_VERSION,
       "X-Restli-Protocol-Version": "2.0.0",
     },
-  });
+  }, { endpoint: path.split("?")[0] ?? path, operation: (init.method ?? "GET").toUpperCase() });
 }
 
 async function linkedinRestJson<T>(path: string, init: RequestInit): Promise<T> {
@@ -50,9 +72,8 @@ export async function fetchLinkedInMemberPostMetrics(postUrn: string): Promise<L
     throw new Error("linkedinPostId não é uma URN share/ugcPost válida.");
   }
   const entityType = normalizedUrn.includes(":ugcPost:") ? "ugc" : "share";
-  const metrics = ["IMPRESSION", "REACTION", "COMMENT", "RESHARE"];
   const result: LinkedInMemberMetric[] = [];
-  for (const metric of metrics) {
+  for (const metric of MEMBER_POST_METRICS) {
     const params = new URLSearchParams({
       q: "entity",
       entity: `(${entityType}:${normalizedUrn})`,
@@ -63,15 +84,18 @@ export async function fetchLinkedInMemberPostMetrics(postUrn: string): Promise<L
       `/memberCreatorPostAnalytics?${params.toString()}`,
       { method: "GET" },
     );
-    const element = payload.elements?.[0];
-    const metricType = typeof element?.metricType === "string"
-      ? element.metricType
-      : element?.metricType && typeof element.metricType === "object"
-        ? Object.values(element.metricType)[0]
-        : metric;
-    result.push({ metricType: metricType ?? metric, count: Math.max(0, Math.round(Number(element?.count ?? 0))) });
+    result.push(parseLinkedInMemberMetricResponse(payload, metric));
   }
   return result;
+}
+
+export async function fetchLinkedInMemberFollowerCount(): Promise<number | null> {
+  const payload = await linkedinRestJson<{ elements?: Array<{ memberFollowersCount?: number }> }>(
+    "/memberFollowersCount?q=me",
+    { method: "GET" },
+  );
+  const value = payload.elements?.[0]?.memberFollowersCount;
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
 interface InitializedUpload {
@@ -112,7 +136,7 @@ async function registerAndUploadMedia(
     throw new Error("LinkedIn não retornou os dados de upload da mídia.");
   }
 
-  const uploadResponse = await fetch(uploadUrl, {
+  const uploadResponse = await fetchLinkedInTracked(uploadUrl, {
     method: "PUT",
     headers: {
       Authorization: `Bearer ${accessToken}`,
@@ -120,7 +144,7 @@ async function registerAndUploadMedia(
       "Content-Length": String(media.byteLength),
     },
     body: media,
-  });
+  }, { endpoint: "media-upload", operation: "PUT" });
   if (!uploadResponse.ok) {
     throw new Error(`Upload do asset no LinkedIn falhou (${uploadResponse.status}).`);
   }

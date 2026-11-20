@@ -7,6 +7,7 @@ import { asStringArray } from "@/lib/career-rag";
 import { prisma } from "@/lib/prisma";
 import { contentFrameworkPrompt } from "../../config/content-skills";
 import { extractSkillsFromText, normalizeSkills } from "@/lib/skills-normalizer";
+import { LINKEDIN_POSITIONING, positioningPrompt } from "../../config/linkedin-positioning";
 
 export interface ProfileAuditReport {
   score: number;
@@ -23,8 +24,8 @@ export interface ProfileAuditReport {
   createdAt: string;
 }
 
-const FALLBACK_HEADLINE = "Tech Lead & Lead Data Architect | CTO Hands-on | Python, AWS, PySpark, Airflow & Node.js | Arquitetura de Dados, ETL/ELT & ROI B2B";
-const FALLBACK_TARGET_TITLES = ["Tech Lead (Data/Cloud)", "Lead Data Architect", "CTO Hands-on", "Head of Data"];
+const FALLBACK_HEADLINE = LINKEDIN_POSITIONING.headline;
+const FALLBACK_TARGET_TITLES = [...LINKEDIN_POSITIONING.internationalTargets.slice(0, 4), ...LINKEDIN_POSITIONING.brazilianTargets.slice(0, 2)];
 const LEGACY_TARGET_PATTERNS = [/(?:executive|head|diretor|gerente).*(?:marketing|martech)/i];
 
 function fallbackTargetTitles(value: Prisma.JsonValue): string[] {
@@ -51,7 +52,7 @@ function dossierKeywords(dossier: string): string[] {
 
 function suggestedHeadlines(profile: { name: string; headline: string; targetTitles: Prisma.JsonValue; skills: Prisma.JsonValue }): string[] {
   const targets = fallbackTargetTitles(profile.targetTitles);
-  const stack = "Python | AWS | PySpark | Airflow | Node.js";
+  const stack = "Python | FastAPI | SQL | PostgreSQL | AWS | Airflow | PySpark";
   return unique([
     FALLBACK_HEADLINE,
     targets[0] + " | " + stack + " | Arquitetura de dados e ROI B2B",
@@ -117,7 +118,7 @@ async function generateMarketAudit(input: {
     messages: [
       {
         role: "system",
-        content: [
+        content: [positioningPrompt(),
           "Frameworks de comunicação para a auditoria:\n" + contentFrameworkPrompt(),
           "Você é uma Tech Recruiter Executiva e especialista em ATS, SEO de LinkedIn e posicionamento para liderança de Dados, Cloud e Tecnologia.",
           "Faça uma auditoria crítica de mercado, não uma validação de preenchimento.",

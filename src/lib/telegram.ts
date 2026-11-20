@@ -4,7 +4,7 @@ import { formatDateInBrazil } from "@/lib/dates";
 const TELEGRAM_API = "https://api.telegram.org/bot";
 const pillarOrder: Record<Post["editorialPillar"], number> = { TOFU: 0, MOFU: 1, BOFU: 2 };
 
-export type ApprovalPost = Pick<Post, "id" | "title" | "textContent" | "mediaUrl" | "funnelStage" | "formatType" | "scheduledFor" | "scheduledDate" | "editorialPillar" | "engagementScore" | "engagementLabel" | "status">;
+export type ApprovalPost = Pick<Post, "id" | "title" | "textContent" | "mediaUrl" | "funnelStage" | "formatType" | "scheduledFor" | "scheduledDate" | "editorialPillar" | "engagementScore" | "engagementLabel" | "status" | "qualityScore" | "qualityStatus" | "language" | "editorialObjective" | "associatedProject">;
 
 function requireTelegramConfig(): { token: string; chatId: string } {
   const token = process.env.TELEGRAM_BOT_TOKEN;
@@ -67,9 +67,13 @@ export async function sendPostForApproval(post: ApprovalPost): Promise<void> {
     ? `\n\n<b>Preview:</b> <a href="${escapeHtml(post.mediaUrl)}">abrir midia</a>`
     : "";
   const projection = post.engagementScore === null ? "N/A" : `${Math.round(post.engagementScore)}/100`;
+  const quality = post.qualityScore === null ? "N/A" : `${Math.round(post.qualityScore)}/100`;
   const message = [
-    "<b>Novo post aguardando aprovacao</b>",
+    `Revisão automática: ${quality}/100 (${post.qualityStatus ?? "PENDENTE"})`,
+    post.qualityStatus === "PASS" ? "<b>Novo post aguardando aprovação</b>" : "<b>⚠️ Conteúdo retido para revisão</b>",
     `<b>${escapeHtml(post.title)}</b>`,
+    `Idioma: ${escapeHtml(post.language)}${post.associatedProject ? ` | Projeto: ${escapeHtml(post.associatedProject)}` : ""}`,
+    post.editorialObjective ? `Objetivo editorial: ${escapeHtml(post.editorialObjective)}` : "",
     `Pilar: ${post.editorialPillar} · Etapa: ${post.funnelStage} · Formato: ${post.formatType}`,
     `Agendado (BRT): ${escapeHtml(formatDateInBrazil(post.scheduledDate ?? post.scheduledFor))}`,
     `🔮 Projeção de Engajamento: ${projection} (${post.engagementLabel ?? "Sem projecao"})`,
@@ -84,7 +88,7 @@ export async function sendPostForApproval(post: ApprovalPost): Promise<void> {
     text: message,
     parse_mode: "HTML",
     disable_web_page_preview: false,
-    reply_markup: approvalKeyboard(post.id),
+    ...(post.qualityStatus === "PASS" ? { reply_markup: approvalKeyboard(post.id) } : {}),
   });
   console.info("[telegram] approval card sent", { postId: post.id, messageId: sent?.message_id });
 }
@@ -100,7 +104,10 @@ function agendaKeyboard(postId: string): { inline_keyboard: Array<Array<Record<s
 }
 
 export async function sendBatchToTelegram(posts: ApprovalPost[]): Promise<void> {
-  const ordered = [...posts].sort((left, right) => pillarOrder[left.editorialPillar] - pillarOrder[right.editorialPillar]);
+  const ordered = [...posts].sort((left, right) => {
+    const dateDifference = (left.scheduledDate ?? left.scheduledFor).getTime() - (right.scheduledDate ?? right.scheduledFor).getTime();
+    return dateDifference || pillarOrder[left.editorialPillar] - pillarOrder[right.editorialPillar];
+  });
   for (const [index, post] of ordered.entries()) {
     if (index > 0) await new Promise((resolve) => setTimeout(resolve, 3000));
     await sendPostForApproval(post);

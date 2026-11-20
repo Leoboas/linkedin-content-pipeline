@@ -1,7 +1,9 @@
 import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { EditorialPillar } from "@prisma/client";
+import { ImplementationStatus, KnowledgeEvidenceStatus, KnowledgeVisibility, type EditorialPillar } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { buildEditorialPlan, type EditorialPlan } from "@/lib/editorial-planner";
+import { observedInteractionRate } from "@/lib/analytics-data";
 
 const pillars: EditorialPillar[] = ["TOFU", "MOFU", "BOFU"];
 
@@ -10,7 +12,11 @@ export interface RagExample {
   pillar: EditorialPillar;
   title: string;
   textContent: string;
-  engagementScore: number;
+  interactionRate: number;
+  impressions: number;
+  interactions: number;
+  measurementWindow: string;
+  exposureHours: number | null;
 }
 
 export interface RagContext {
@@ -19,6 +25,8 @@ export interface RagContext {
   latestPublished: PublishedPerformance | null;
   negativeFeedback: string[];
   references: string;
+  professionalKnowledge: string;
+  editorialPlan: EditorialPlan;
   systemPrompt: string;
 }
 
@@ -28,10 +36,10 @@ export interface PublishedPerformance {
   editorialPillar: EditorialPillar;
   engagementScore: number | null;
   publishedAt: Date | null;
-  impressions: number;
-  reactions: number;
-  comments: number;
-  shares: number;
+  impressions: number | null;
+  reactions: number | null;
+  comments: number | null;
+  shares: number | null;
 }
 
 export interface RejectionSignal {
@@ -54,23 +62,40 @@ async function loadTopPublishedPosts(editorialLineId: string, editorialPillar: E
       editorialLineId,
       editorialPillar,
       status: "PUBLISHED",
-      engagementScore: { not: null },
+      metrics: { some: { source: { in: ["LINKEDIN_API", "MANUAL"] }, impressions: { gt: 0 }, availability: { in: ["AVAILABLE", "PARTIAL"] } } },
     },
-    orderBy: { engagementScore: "desc" },
-    take: 3,
-    select: { id: true, title: true, textContent: true, engagementScore: true },
+    orderBy: { publishedAt: "desc" },
+    take: 100,
+    select: {
+      id: true, title: true, textContent: true,
+      metrics: {
+        where: { source: { in: ["LINKEDIN_API", "MANUAL"] }, availability: { in: ["AVAILABLE", "PARTIAL"] } },
+        orderBy: { capturedAt: "desc" }, take: 10,
+        select: { impressions: true, reactions: true, comments: true, shares: true, measurementWindow: true, exposureHours: true },
+      },
+    },
   });
 
-  return posts.flatMap((post) => {
-    if (post.engagementScore === null) return [];
+  const measured = posts.flatMap((post) => {
+    const metric = post.metrics.find((item) => observedInteractionRate(item) !== null);
+    if (!metric || metric.impressions === null || metric.impressions <= 0) return [];
+    const interactionRate = observedInteractionRate(metric);
+    if (interactionRate === null || metric.reactions === null || metric.comments === null || metric.shares === null) return [];
     return [{
       id: post.id,
       pillar: editorialPillar,
       title: post.title,
       textContent: post.textContent.slice(0, 1800),
-      engagementScore: post.engagementScore,
+      interactionRate,
+      impressions: metric.impressions,
+      interactions: metric.reactions + metric.comments + metric.shares,
+      measurementWindow: metric.measurementWindow,
+      exposureHours: metric.exposureHours,
     }];
   });
+  const comparisonWindow = (["7D", "72H", "24H"] as const).find((window) => measured.some((item) => item.measurementWindow === window));
+  return measured.filter((item) => item.measurementWindow === comparisonWindow)
+    .sort((left, right) => right.interactionRate - left.interactionRate).slice(0, 3);
 }
 
 async function loadLatestPublishedPerformance(editorialLineId: string): Promise<PublishedPerformance | null> {
@@ -84,6 +109,7 @@ async function loadLatestPublishedPerformance(editorialLineId: string): Promise<
       engagementScore: true,
       publishedAt: true,
       metrics: {
+        where: { source: { in: ["LINKEDIN_API", "MANUAL"] }, availability: { in: ["AVAILABLE", "PARTIAL"] } },
         orderBy: { capturedAt: "desc" },
         take: 1,
         select: { impressions: true, reactions: true, comments: true, shares: true },
@@ -98,10 +124,10 @@ async function loadLatestPublishedPerformance(editorialLineId: string): Promise<
     editorialPillar: post.editorialPillar,
     engagementScore: post.engagementScore,
     publishedAt: post.publishedAt,
-    impressions: metric?.impressions ?? 0,
-    reactions: metric?.reactions ?? 0,
-    comments: metric?.comments ?? 0,
-    shares: metric?.shares ?? 0,
+    impressions: metric?.impressions ?? null,
+    reactions: metric?.reactions ?? null,
+    comments: metric?.comments ?? null,
+    shares: metric?.shares ?? null,
   };
 }
 
@@ -163,6 +189,93 @@ async function loadFileReferences(): Promise<string> {
   return [fileContent, "===== referencias adicionadas via Telegram =====", databaseContent].join("\n\n");
 }
 
+async function loadProfessionalKnowledge(): Promise<string> {
+  const evidenceStatus = {
+    in: [KnowledgeEvidenceStatus.VERIFIED, KnowledgeEvidenceStatus.DOCUMENTED, KnowledgeEvidenceStatus.USER_CONFIRMED],
+  };
+  const commonWhere = {
+    publicAllowed: true,
+    visibility: KnowledgeVisibility.PUBLIC_SAFE,
+    evidenceStatus,
+  };
+
+  const [facts, experiences, projects] = await Promise.all([
+    prisma.professionalFact.findMany({
+      where: commonWhere,
+      orderBy: [{ category: "asc" }, { updatedAt: "desc" }],
+      take: 80,
+      select: {
+        claim: true,
+        category: true,
+        implementationStatus: true,
+        sources: { select: { source: { select: { title: true, trustLevel: true } } } },
+      },
+    }),
+    prisma.professionalExperience.findMany({
+      where: commonWhere,
+      orderBy: [{ current: "desc" }, { updatedAt: "desc" }],
+      take: 12,
+      select: {
+        company: true,
+        title: true,
+        summary: true,
+        technologies: true,
+        sources: { select: { source: { select: { title: true, trustLevel: true } } } },
+      },
+    }),
+    prisma.portfolioProject.findMany({
+      where: {
+        ...commonWhere,
+        implementationStatus: { in: [ImplementationStatus.IMPLEMENTED, ImplementationStatus.USED_IN_PORTFOLIO] },
+      },
+      orderBy: { updatedAt: "desc" },
+      take: 12,
+      select: {
+        name: true,
+        summary: true,
+        technologies: true,
+        themes: true,
+        publicUrl: true,
+        sources: { select: { source: { select: { title: true, trustLevel: true } } } },
+      },
+    }),
+  ]);
+
+  const sourceLabel = (sources: Array<{ source: { title: string; trustLevel: string } }>): string => {
+    const source = sources[0]?.source;
+    return source ? `Fonte: ${source.title} (${source.trustLevel})` : "Fonte registrada na base profissional";
+  };
+  const jsonArray = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+
+  return [
+    "===== fatos profissionais publicáveis =====",
+    facts.length > 0
+      ? facts.map((fact) => `- [${fact.category}/${fact.implementationStatus}] ${fact.claim}\n  ${sourceLabel(fact.sources)}`).join("\n")
+      : "Nenhum fato profissional público confirmado encontrado.",
+    "===== experiências profissionais publicáveis =====",
+    experiences.length > 0
+      ? experiences.map((experience) => [
+          `- ${experience.title} — ${experience.company}`,
+          `  Contexto: ${experience.summary.slice(0, 900)}`,
+          `  Tecnologias: ${jsonArray(experience.technologies).join(", ") || "não informadas"}`,
+          `  ${sourceLabel(experience.sources)}`,
+        ].join("\n")).join("\n")
+      : "Nenhuma experiência profissional pública confirmada encontrada.",
+    "===== projetos de portfólio publicáveis =====",
+    projects.length > 0
+      ? projects.map((project) => [
+          `- ${project.name}`,
+          `  Resumo: ${project.summary.slice(0, 900)}`,
+          `  Tecnologias: ${jsonArray(project.technologies).join(", ") || "não informadas"}`,
+          `  Temas: ${jsonArray(project.themes).join(", ") || "não informados"}`,
+          project.publicUrl ? `  URL pública: ${project.publicUrl}` : "",
+          `  ${sourceLabel(project.sources)}`,
+        ].filter(Boolean).join("\n")).join("\n")
+      : "Nenhum projeto de portfólio publicável confirmado encontrado.",
+    "Regra de evidência: trate este bloco como fonte factual. Não transforme item planejado, pendente ou sem evidência em experiência realizada. Não invente métricas, clientes, cargos ou resultados.",
+  ].join("\n");
+}
+
 function rejectionPatternFromFeedback(feedback: string): string {
   const normalized = feedback.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
   const categories = [
@@ -198,7 +311,7 @@ function formatExamples(examples: RagExample[]): string {
   }
 
   return examples.map((example, index) => [
-    `Exemplo ${index + 1} — pilar ${example.pillar} — score ${example.engagementScore.toFixed(1)}/100`,
+    `Exemplo ${index + 1} — pilar ${example.pillar} — taxa observada ${example.interactionRate.toFixed(2)}% no snapshot cumulativo ${example.measurementWindow} (idade real: ${example.exposureHours ?? "indisponível"}h); ${example.impressions} impressões e ${example.interactions} interações`,
     `Título: ${example.title}`,
     `Texto publicado:\n${example.textContent}`,
   ].join("\n")).join("\n\n---\n\n");
@@ -208,35 +321,42 @@ function formatLatestPerformance(performance: PublishedPerformance | null): stri
   if (!performance) {
     return "Ainda nao ha um post publicado para calibrar a proxima rodada. Use boas praticas de gancho, evidencia e CTA sem inventar metricas.";
   }
-  const interactions = performance.reactions + performance.comments + performance.shares;
-  const rate = performance.impressions > 0
-    ? ((interactions / performance.impressions) * 100).toFixed(2)
-    : "sem dados de impressoes";
+  const rate = observedInteractionRate(performance);
+  const observedMetrics = performance.impressions !== null && performance.reactions !== null && performance.comments !== null && performance.shares !== null
+    ? `${performance.impressions} impressões, ${performance.reactions} reações, ${performance.comments} comentários e ${performance.shares} compartilhamentos (taxa observada: ${rate?.toFixed(2)}%)`
+    : "métricas reais indisponíveis ou incompletas; não tratar campos ausentes como zero";
   return [
     `Ultimo post publicado (${performance.editorialPillar}): ${performance.title}`,
     `Score projetado registrado: ${performance.engagementScore === null ? "sem score" : `${performance.engagementScore.toFixed(1)}/100`}.`,
-    `Metricas coletadas: ${performance.impressions} impressoes, ${performance.reactions} reacoes, ${performance.comments} comentarios e ${performance.shares} compartilhamentos (taxa de interacao: ${rate}).`,
+    `Métricas coletadas: ${observedMetrics}.`,
     `Texto de referencia: ${performance.textContent}`,
     "Aprendizado obrigatorio: aumente a especificidade do gancho nas duas primeiras linhas, conecte uma evidencia verificavel a uma decisao tecnica, use no maximo uma metrica autorizada e encerre com CTA conversacional. Nao copie o texto nem invente resultados.",
   ].join("\n");
 }
 
 export async function buildRagContext(editorialLineId: string): Promise<RagContext> {
-  const [dossier, groupedExamples, latestPublished, negativeFeedback, references] = await Promise.all([
+  const [dossier, groupedExamples, latestPublished, negativeFeedback, references, professionalKnowledge, editorialPlan] = await Promise.all([
     loadBrandDossier(),
     Promise.all(pillars.map((pillar) => loadTopPublishedPosts(editorialLineId, pillar))),
     loadLatestPublishedPerformance(editorialLineId),
     loadNegativeSignals(editorialLineId),
     loadFileReferences(),
+    loadProfessionalKnowledge(),
+    buildEditorialPlan(editorialLineId),
   ]);
   const examples = groupedExamples.flat();
   const systemPrompt = [
     "Você é o estrategista sênior de conteúdo B2B do autor.",
     "Use o dossier de marca abaixo como fonte de posicionamento.",
+    "Use a base profissional publicável para ancorar o conteúdo em experiências reais do autor. Quando ela não trouxer evidência, não complete com suposições.",
     "Os exemplos são few-shot: absorva estrutura, clareza e densidade de evidência, mas não copie frases nem métricas.",
-    "Retorne conteúdo original em português do Brasil.",
+    "Use exactly the language requested by the generation task; do not mix languages within one post.",
     "\n===== brand-dossier.md =====\n",
     dossier,
+    "\n===== base profissional publicável =====\n",
+    professionalKnowledge,
+    "\n===== planejamento editorial e anti-repetição =====\n",
+    editorialPlan.systemPrompt,
     "\n===== exemplos de alta performance (RAG) =====\n",
     formatExamples(examples),
     "\n===== aprendizado do ultimo post publicado =====\n",
@@ -247,7 +367,7 @@ export async function buildRagContext(editorialLineId: string): Promise<RagConte
     references,
   ].join("\n");
 
-  return { dossier, examples, latestPublished, negativeFeedback, references, systemPrompt };
+  return { dossier, examples, latestPublished, negativeFeedback, references, professionalKnowledge, editorialPlan, systemPrompt };
 }
 
 export async function getTopRagPosts(editorialLineId: string, editorialPillar: EditorialPillar): Promise<RagExample[]> {

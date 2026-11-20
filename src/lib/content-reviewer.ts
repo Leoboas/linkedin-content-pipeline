@@ -19,11 +19,16 @@ export interface ReviewablePost {
   slides: QualitySlide[];
   imagePrompt?: string | null;
   mediaUrl?: string | null;
+  contentBrief?: unknown;
 }
 
 export interface RenderedImageReview {
   score: number;
   textDetected: boolean;
+  textLegible: boolean;
+  aestheticScore: number;
+  semanticScore: number;
+  technicalScore: number;
   issues: string[];
   recommendations: string[];
   summary: string;
@@ -88,7 +93,7 @@ export async function reviewPostQuality(post: ReviewablePost): Promise<PostQuali
           "Reprove clichês, texto genérico, afirmações sem evidência, excesso de texto em lâminas e prompts que induzam letras na imagem.",
           "Retorne exclusivamente JSON: {score,dimensions:{hook,clarity,narrative,cta,pillarFit,visualBrief},textIssues:string[],visualIssues:string[],recommendations:string[],summary:string,status:'PASS'|'NEEDS_REVISION'|'BLOCKED'}.",
         ].join(" ") },
-        { role: "user", content: JSON.stringify({ post, deterministicChecks: local }) },
+        { role: "user", content: JSON.stringify({ post, contentBrief: post.contentBrief, deterministicChecks: local }) },
       ],
     });
     const parsed = parseJson(response.choices[0]?.message.content ?? "");
@@ -114,22 +119,24 @@ export function qualityReviewJson(review: PostQualityReview): Prisma.InputJsonVa
   return review as unknown as Prisma.InputJsonValue;
 }
 
-export async function reviewRenderedImage(input: { mediaUrl: string; title: string; editorialPillar: string }): Promise<RenderedImageReview | null> {
-  if (!process.env.GEMINI_API_KEY || /\.pdf(?:\?|$)/i.test(input.mediaUrl)) return null;
+export async function reviewRenderedImage(input: { mediaUrl?: string; imageBytes?: Uint8Array; mimeType?: string; title: string; editorialPillar: string; brief?: unknown }): Promise<RenderedImageReview | null> {
+  if (!process.env.GEMINI_API_KEY || (!input.imageBytes && (!input.mediaUrl || /\.pdf(?:\?|$)/i.test(input.mediaUrl)))) return null;
   try {
-    const response = await fetch(input.mediaUrl, { signal: AbortSignal.timeout(20_000) });
-    if (!response.ok) throw new Error(`mídia retornou ${response.status}`);
-    const mimeType = response.headers.get("content-type")?.split(";")[0] || "image/png";
+    const response = input.imageBytes ? null : await fetch(input.mediaUrl!, { signal: AbortSignal.timeout(20_000) });
+    if (response && !response.ok) throw new Error(`mídia retornou ${response.status}`);
+    const mimeType = input.mimeType ?? response?.headers.get("content-type")?.split(";")[0] ?? "image/png";
     if (!mimeType.startsWith("image/")) return null;
-    const bytes = Buffer.from(await response.arrayBuffer()).toString("base64");
+    const bytes = input.imageBytes
+      ? Buffer.from(input.imageBytes).toString("base64")
+      : Buffer.from(await response!.arrayBuffer()).toString("base64");
     const model = process.env.GEMINI_MODEL?.trim() || "gemini-3.6-flash";
     const result = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(process.env.GEMINI_API_KEY)}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        systemInstruction: { parts: [{ text: "Você é uma diretora de arte editorial para LinkedIn B2B. Avalie a imagem final com rigor: legibilidade, texto cortado/deformado, hierarquia, contraste, poluição, coerência com o pilar e qualidade profissional. Não confunda ausência de texto com problema quando a peça for uma foto. Retorne somente JSON: {score:number,textDetected:boolean,issues:string[],recommendations:string[],summary:string}." }] },
+        systemInstruction: { parts: [{ text: "You are a multimodal art director and technical reviewer for LinkedIn B2B Tech. Inspect the final image pixels, not just the prompt. Score aesthetics, semantic fit to the specific thesis/conflict, and technical accuracy independently. The design may intentionally contain a short programmatically typeset title: report textDetected and textLegible separately, and flag only misspelled, distorted, unintended, or unreadable text. Return JSON only: {score:number,aestheticScore:number,semanticScore:number,technicalScore:number,textDetected:boolean,textLegible:boolean,issues:string[],recommendations:string[],summary:string}. Final score is the minimum of the three dimensions." }] },
         contents: [{ role: "user", parts: [
-          { text: JSON.stringify({ title: input.title, editorialPillar: input.editorialPillar, task: "Avalie esta imagem antes da aprovação." }) },
+          { text: JSON.stringify({ title: input.title, editorialPillar: input.editorialPillar, brief: input.brief, task: "Avalie esta imagem final antes da aprovação." }) },
           { inlineData: { mimeType, data: bytes } },
         ] }],
         generationConfig: { temperature: 0, responseMimeType: "application/json", maxOutputTokens: 800 },
@@ -139,7 +146,12 @@ export async function reviewRenderedImage(input: { mediaUrl: string; title: stri
     const payload = await result.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
     const text = payload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("") ?? "";
     const parsed = parseJson(text);
-    return { score: number(parsed.score), textDetected: parsed.textDetected === true, issues: strings(parsed.issues), recommendations: strings(parsed.recommendations), summary: typeof parsed.summary === "string" ? parsed.summary : "Revisão visual concluída." };
+    const aestheticScore = number(parsed.aestheticScore, number(parsed.score));
+    const semanticScore = number(parsed.semanticScore, number(parsed.score));
+    const technicalScore = number(parsed.technicalScore, number(parsed.score));
+    const textDetected = parsed.textDetected === true;
+    const textLegible = parsed.textLegible === true || (!textDetected && parsed.textLegible !== false);
+    return { score: Math.min(aestheticScore, semanticScore, technicalScore), aestheticScore, semanticScore, technicalScore, textDetected, textLegible, issues: strings(parsed.issues), recommendations: strings(parsed.recommendations), summary: typeof parsed.summary === "string" ? parsed.summary : "Revisão visual concluída." };
   } catch (error) {
     console.warn("[content-reviewer] revisão visual indisponível", error instanceof Error ? error.message : String(error));
     return null;

@@ -7,6 +7,8 @@ import { prisma } from "@/lib/prisma";
 import { nextValidPostingWindow } from "@/lib/scheduler";
 import { formatDateInBrazil } from "@/lib/dates";
 import { requestBatchIfStockIsLow } from "@/lib/stock";
+import { getApprovalEligibility } from "@/lib/publication-eligibility";
+import { approvePostWithCurrentCreative } from "@/lib/post-approval";
 import {
   answerCallbackQuery, editTelegramMessage, postMarker, sendAgenda,
   sendCareerJobAnalysis, sendFeedbackPrompt, sendFeedbackQueued, sendProfileAudit, sendTelegramText,
@@ -134,11 +136,38 @@ async function handleCallback(callback: TelegramCallbackQuery): Promise<NextResp
   }
   const actionableStatuses = new Set<PostStatus>([PostStatus.AWAITING_APPROVAL, PostStatus.DRAFT]);
   if (!current || !actionableStatuses.has(current.status)) return NextResponse.json({ ok: true, alreadyProcessed: true });
+  if (!isReject) {
+    const eligibility = getApprovalEligibility(current);
+    if (!eligibility.eligible) {
+      const chatId = chatIdOf(callback.message);
+      if (chatId !== undefined) {
+        await sendTelegramText(chatId, `⚠️ <b>Conteúdo retido para revisão.</b>\n${eligibility.reasons.map((reason) => `• ${reason}`).join("\n")}\n\nUse a reformulação antes de aprovar.`);
+      }
+      return NextResponse.json({ ok: true, blocked: true, reasons: eligibility.reasons });
+    }
+  }
   const existingSchedule = current.scheduledDate ?? current.scheduledFor;
   const scheduledDate = existingSchedule > new Date() ? existingSchedule : nextValidPostingWindow(new Date(), current.editorialPillar);
-  const nextStatus = isReject ? PostStatus.REJECTED_PENDING_FEEDBACK : PostStatus.APPROVED;
-  const updated = await prisma.post.updateMany({ where: { id: postId, status: { in: [PostStatus.AWAITING_APPROVAL, PostStatus.DRAFT] } }, data: { status: nextStatus, ...(!isReject ? { scheduledFor: scheduledDate, scheduledDate } : {}) } });
-  if (updated.count === 0) return NextResponse.json({ ok: true, alreadyProcessed: true });
+  let nextStatus: PostStatus;
+  if (isReject) {
+    const rejected = await prisma.$transaction(async (tx) => {
+      const updated = await tx.post.updateMany({ where: { id: postId, status: { in: [PostStatus.AWAITING_APPROVAL, PostStatus.DRAFT] } }, data: { status: PostStatus.REJECTED_PENDING_FEEDBACK, approvedCreativeBriefId: null } });
+      if (!updated.count || !current.currentVersionId) return updated.count;
+      const creative = await tx.creativeBrief.findFirst({ where: { postId, postVersionId: current.currentVersionId }, orderBy: [{ creativeRevision: "desc" }, { createdAt: "desc" }], select: { id: true } });
+      if (creative) await tx.postApprovalEvent.create({ data: { postId, postVersionId: current.currentVersionId, creativeBriefId: creative.id, eventType: "REJECTED", actor: `telegram:${String(chatIdOf(callback.message) ?? "unknown")}` } });
+      return updated.count;
+    });
+    if (rejected === 0) return NextResponse.json({ ok: true, alreadyProcessed: true });
+    nextStatus = PostStatus.REJECTED_PENDING_FEEDBACK;
+  } else {
+    const result = await approvePostWithCurrentCreative(postId, scheduledDate, `telegram:${String(chatIdOf(callback.message) ?? "unknown")}`);
+    if (!result.approved) {
+      const chatId = chatIdOf(callback.message);
+      if (chatId !== undefined) await sendTelegramText(chatId, `⚠️ <b>Conteúdo não aprovado.</b>\n${result.reasons.map((reason) => `• ${reason}`).join("\n")}`);
+      return NextResponse.json({ ok: true, blocked: true, reasons: result.reasons });
+    }
+    nextStatus = PostStatus.APPROVED;
+  }
   const chatId = chatIdOf(callback.message);
   const messageId = callback.message?.message_id;
   if (chatId !== undefined && messageId !== undefined) {

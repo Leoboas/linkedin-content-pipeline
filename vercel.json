@@ -9,6 +9,10 @@
       "schedule": "5 0 * * *"
     },
     {
+      "path": "/api/cron/analytics-report",
+      "schedule": "0 12 * * 1"
+    },
+    {
       "path": "/api/cron/career",
       "schedule": "30 14 * * 1-5"
     }

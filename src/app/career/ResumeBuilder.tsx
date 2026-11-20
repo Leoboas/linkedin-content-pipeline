@@ -68,7 +68,21 @@ export function ResumeBuilder({ token, matches }: { token: string; matches: Arra
     finally { setBusy(false); }
   }
 
-  return <section className="admin-panel">
+  function downloadPdf(draftId: string) {
+    if (!token) return;
+    void fetch(`/api/career/resumes/${draftId}/pdf`, { headers: { Authorization: "Bearer " + token } }).then(async (response) => {
+      if (!response.ok) throw new Error("Não foi possível gerar o PDF.");
+      const blob = await response.blob();
+      const objectUrl = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = objectUrl;
+      link.download = `curriculo-${draftId.slice(0, 8)}.pdf`;
+      link.click();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+    }).catch((error) => setMessage(error instanceof Error ? error.message : "Falha ao baixar o PDF."));
+  }
+
+  return <section id="resume-builder" className="admin-panel">
     <div className="admin-section-heading"><div><div className="admin-kicker">Resume Builder</div><h2>Currículo direcionado por vaga</h2><p className="admin-subtitle">Cada geração cria uma versão para revisão. O motor combina o perfil, skills normalizadas e a descrição da vaga sem inventar experiências.</p></div></div>
     <div className="admin-edit">
       <input className="admin-input" value={targetRole} onChange={(event) => setTargetRole(event.target.value)} placeholder="Cargo-alvo" />
@@ -85,6 +99,7 @@ export function ResumeBuilder({ token, matches }: { token: string; matches: Arra
       {draft.validation?.warnings?.length ? <p className="admin-meta">⚠️ {draft.validation.warnings.join(" · ")}</p> : <p className="admin-meta">✅ Pronto para revisão humana.</p>}
       {!!draft.content.skills?.length && <p className="admin-meta">Skills: {draft.content.skills.flatMap((group) => group.items).join(", ")}</p>}
       <button className="admin-button" onClick={() => { setSelectedDraft(draft.id); setTargetRole(draft.targetRole); setTemplate(draft.template); }}>Solicitar nova revisão</button>
+      <button className="admin-button active" onClick={() => downloadPdf(draft.id)}>Baixar PDF para candidatura</button>
     </article>)}</div>
   </section>;
 }

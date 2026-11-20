@@ -153,8 +153,10 @@ async function fetchAuthorizedFeed(): Promise<FeedJob[]> {
   });
 }
 
-async function searchJobs(): Promise<{ jobs: FeedJob[]; queries: Array<{ title: string; location: string; url: string }> }> {
-  const queries = TARGET_JOB_TITLES.flatMap((title) => SEARCH_LOCATIONS.map((location) => ({ title, location, url: searchUrl(title, location) })));
+async function searchJobs(targetTitles: string[], locations: string[]): Promise<{ jobs: FeedJob[]; queries: Array<{ title: string; location: string; url: string }> }> {
+  const normalizedTitles = [...new Set(targetTitles.map((item) => item.trim()).filter(Boolean))].slice(0, 12);
+  const normalizedLocations = [...new Set(locations.map((item) => item.trim()).filter(Boolean))].slice(0, 10);
+  const queries = normalizedTitles.flatMap((title) => normalizedLocations.map((location) => ({ title, location, url: searchUrl(title, location) })));
   const authorizedJobs = await fetchAuthorizedFeed();
   const publicJobs: FeedJob[] = [];
   for (const query of queries) {
@@ -187,12 +189,19 @@ export async function runCareerScan(): Promise<{ runId: string; matches: CareerJ
   const run = await prisma.careerSearchRun.create({ data: { status: SearchRunStatus.RUNNING } });
   try {
     const profile = await getOrCreateProfile();
+    const preferences = await prisma.jobSearchPreference.findUnique({ where: { profileId: profile.id } });
+    const preferredTitles = asStringArray(preferences?.targetTitles);
+    const preferredLocations = asStringArray(preferences?.locations);
     const documents = await prisma.careerDocument.findMany({ where: { profileId: profile.id }, select: { title: true, content: true } });
     const context = buildCareerContext({ profile, documents });
-    const search = await searchJobs();
+    const search = await searchJobs(
+      preferredTitles.length ? preferredTitles : asStringArray(profile.targetTitles).length ? asStringArray(profile.targetTitles) : [...TARGET_JOB_TITLES],
+      preferredLocations.length ? preferredLocations : [...SEARCH_LOCATIONS],
+    );
     const matches: CareerJobPreview[] = [];
 
     for (const input of search.jobs) {
+      if (preferences?.remoteOnly && !input.remote && !input.location?.toLocaleLowerCase("pt-BR").includes("remote") && !input.location?.toLocaleLowerCase("pt-BR").includes("remoto")) continue;
       const job = await prisma.jobListing.upsert({
         where: { source_externalId: { source: input.source === "LINKEDIN" ? JobSource.LINKEDIN : JobSource.AUTHORIZED_FEED, externalId: input.externalId ?? input.url } },
         update: { title: input.title, company: input.company, location: input.location, remote: input.remote ?? false, url: input.url, description: input.description ?? "", status: JobListingStatus.OPEN },
@@ -219,7 +228,8 @@ export async function runCareerScan(): Promise<{ runId: string; matches: CareerJ
       await prisma.skillRadar.upsert({ where: { skill_category: { skill, category: "job-market" } }, update: { demandCount, candidateLevel, gapScore: candidateLevel ? 0 : Math.min(100, demandCount * 10), evidence: { source: "authorized-feed" } }, create: { skill, category: "job-market", demandCount, candidateLevel, gapScore: candidateLevel ? 0 : Math.min(100, demandCount * 10), evidence: { source: "authorized-feed" } } });
     }
 
-    const sorted = matches.sort((left, right) => right.score - left.score).slice(0, 20);
+    const minimumMatchScore = preferences?.minimumMatchScore ?? 0;
+    const sorted = matches.filter((match) => match.score >= minimumMatchScore).sort((left, right) => right.score - left.score).slice(0, 20);
     await prisma.careerSearchRun.update({ where: { id: run.id }, data: { status: SearchRunStatus.COMPLETED, queryCount: search.queries.length, resultCount: search.jobs.length, completedAt: new Date() } });
     return { runId: run.id, matches: sorted, queries: search.queries.length, discovered: search.jobs.length, message: search.jobs.length ? "Vagas atualizadas a partir das consultas públicas do LinkedIn e de feeds autorizados." : "Nenhuma vaga retornada pelo LinkedIn Guest Jobs ou por feed autorizado." };
   } catch (error) {
@@ -272,6 +282,6 @@ export async function auditLinkedInProfile() {
   return prisma.linkedInSeoAudit.create({ data: { profileId: profile.id, score, strengths, recommendations, snapshot: { headline: profile.headline, skills, targetTitles: targets } } });
 }
 
-export function linkedinSearchQueries() {
-  return TARGET_JOB_TITLES.flatMap((title) => SEARCH_LOCATIONS.map((location) => ({ title, location, url: searchUrl(title, location) })));
+export function linkedinSearchQueries(targetTitles: string[] = [...TARGET_JOB_TITLES], locations: string[] = [...SEARCH_LOCATIONS]) {
+  return targetTitles.flatMap((title) => locations.map((location) => ({ title, location, url: searchUrl(title, location) })));
 }

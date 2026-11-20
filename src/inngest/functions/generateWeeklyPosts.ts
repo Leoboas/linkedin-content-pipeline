@@ -3,7 +3,7 @@ import { Prisma, PostStatus, QualityGateStatus } from "@prisma/client";
 import { inngest } from "@/inngest/client";
 import { isAiCapacityError } from "@/lib/ai-provider";
 import { getAppUrl } from "@/lib/app-url";
-import { generateNewPostBatch, refactorPostWithFeedback } from "@/lib/content-engine";
+import { generateNewPostBatch, recordRenderedCreativeVersion, refactorPostWithFeedback } from "@/lib/content-engine";
 import { generateSingleImageAsset } from "@/lib/creative-renderer";
 import type { GeneratedSlide } from "@/lib/huggingface";
 import { buildImagePrompt } from "@/lib/image-prompt-engine";
@@ -14,11 +14,14 @@ import { pillarOrder } from "@/lib/scheduling";
 import { requestBatchIfStockIsLow } from "@/lib/stock";
 import { uploadPublicAsset } from "@/lib/storage";
 import { sendBatchToTelegram, sendFeedbackRetryPrompt, sendHuggingFaceQuotaAlert, sendPostForApproval } from "@/lib/telegram";
-import { reviewRenderedImage } from "@/lib/content-reviewer";
+import { reviewRenderedImage, type RenderedImageReview } from "@/lib/content-reviewer";
+import { getPublicationEligibility } from "@/lib/publication-eligibility";
+import { buildContentBrief } from "@/lib/creative-brief";
 
 interface WeeklyEventData {
   triggeredAt?: string;
   batchKey?: string;
+  weekStart?: string;
 }
 
 interface PublishEventData {
@@ -45,26 +48,53 @@ function slidesFromJson(value: Prisma.JsonValue | null): GeneratedSlide[] {
   });
 }
 
-async function renderCarouselPdf(postId: string, title: string, slides: GeneratedSlide[]): Promise<string> {
+async function renderCarouselPdf(postId: string, title: string, slides: GeneratedSlide[], pillar: string, brief: ReturnType<typeof buildContentBrief>): Promise<{ mediaUrl: string; visualReview: RenderedImageReview | null }> {
   if (slides.length === 0) throw new Error(`Post ${postId} não possui lâminas para renderizar.`);
   const pdf = await PDFDocument.create();
   const appUrl = getAppUrl();
+  const slideReviews: Array<RenderedImageReview | null> = [];
   for (const [index, slide] of slides.entries()) {
-    const params = new URLSearchParams({ title: slide.title, content: JSON.stringify(slide.bullets), page: String(index + 1), pageCount: String(slides.length), layout: "architecture", pillar: "TECH · DATA · GROWTH" });
+    const params = new URLSearchParams({ title: slide.title, content: JSON.stringify(slide.bullets), page: String(index + 1), pageCount: String(slides.length), layout: "architecture", pillar: "TECH · DATA · GROWTH", v: String(Date.now()) });
     if (slide.code) params.set("code", slide.code);
     if (slide.metrics) params.set("metrics", JSON.stringify(slide.metrics));
     const response = await fetch(`${appUrl}/api/og/slide?${params.toString()}`, { cache: "no-store" });
     if (!response.ok) throw new Error(`Falha ao renderizar lâmina ${index + 1} do post ${postId}: ${response.status}`);
-    const image = await pdf.embedPng(await response.arrayBuffer());
+    const bytes = await response.arrayBuffer();
+    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+    slideReviews.push(await reviewRenderedImage({
+      imageBytes: new Uint8Array(bytes),
+      mimeType: contentType.includes("jpeg") || contentType.includes("jpg") ? "image/jpeg" : "image/png",
+      title: `${title} — lâmina ${index + 1}: ${slide.title}`,
+      editorialPillar: pillar,
+      brief: { ...brief, slideTitle: slide.title, slideBullets: slide.bullets },
+    }));
+    const image = contentType.includes("jpeg") || contentType.includes("jpg")
+      ? await pdf.embedJpg(bytes)
+      : await pdf.embedPng(bytes);
     const page = pdf.addPage([1600, 900]);
     page.drawImage(image, { x: 0, y: 0, width: 1600, height: 900 });
   }
-  return uploadPublicAsset(`linkedin-posts/${postId}-${encodeURIComponent(title)}.pdf`, await pdf.save(), "application/pdf");
+  const visualReview = slideReviews.length === slides.length && slideReviews.every((review): review is RenderedImageReview => review !== null)
+    ? {
+        score: Math.min(...slideReviews.map((review) => review.score)),
+        aestheticScore: Math.min(...slideReviews.map((review) => review.aestheticScore)),
+        semanticScore: Math.min(...slideReviews.map((review) => review.semanticScore)),
+        technicalScore: Math.min(...slideReviews.map((review) => review.technicalScore)),
+        textDetected: slideReviews.some((review) => review.textDetected),
+        textLegible: slideReviews.every((review) => review.textLegible),
+        issues: slideReviews.flatMap((review, index) => review.issues.map((issue) => `Lâmina ${index + 1}: ${issue}`)),
+        recommendations: slideReviews.flatMap((review, index) => review.recommendations.map((item) => `Lâmina ${index + 1}: ${item}`)),
+        summary: `Revisão multimodal das ${slideReviews.length} lâminas; scores consolidados pelo menor resultado.`,
+      }
+    : null;
+  const mediaUrl = await uploadPublicAsset(`linkedin-posts/${postId}-${encodeURIComponent(title)}.pdf`, await pdf.save(), "application/pdf");
+  return { mediaUrl, visualReview };
 }
 
 async function renderSingleImage(postId: string, title: string, textContent: string, slides: GeneratedSlide[], storedPrompt?: string | null, editorialPillar?: string): Promise<string> {
   const imagePrompt = storedPrompt ?? buildImagePrompt({ title, textContent, visualBullets: slides[0]?.bullets });
-  return generateSingleImageAsset({ postId, title, editorialPillar, imagePrompt });
+  const brief = buildContentBrief({ title, textContent, editorialPillar: editorialPillar ?? "TOFU", visualBullets: slides[0]?.bullets });
+  return generateSingleImageAsset({ postId, title, editorialPillar, imagePrompt, contentBrief: brief, overlayTitle: brief.shortOverlayTitle });
 }
 
 export const weeklyPostPipeline = inngest.createFunction(
@@ -79,26 +109,34 @@ export const weeklyPostPipeline = inngest.createFunction(
       for (const post of posts) {
         if (post.mediaUrl || post.formatType === "TEXT_ONLY") continue;
         const slides = slidesFromJson(post.slidesJson);
-        const mediaUrl = post.formatType === "CAROUSEL_PDF"
-          ? await renderCarouselPdf(post.id, post.title, slides)
-          : await renderSingleImage(post.id, post.title, post.textContent, slides, post.imagePrompt, post.editorialPillar);
-        const visualReview = post.formatType === "SINGLE_IMAGE"
-          ? await reviewRenderedImage({ mediaUrl, title: post.title, editorialPillar: post.editorialPillar })
-          : null;
+        const brief = buildContentBrief({ title: post.title, textContent: post.textContent, editorialPillar: post.editorialPillar, visualBullets: slides[0]?.bullets });
+        const imagePrompt = post.imagePrompt ?? buildImagePrompt({ title: post.title, textContent: post.textContent, editorialPillar: post.editorialPillar, visualBullets: slides[0]?.bullets, contentBrief: brief });
+        let mediaUrl: string;
+        let visualReview: RenderedImageReview | null;
+        if (post.formatType === "CAROUSEL_PDF") {
+          const rendered = await renderCarouselPdf(post.id, post.title, slides, post.editorialPillar, brief);
+          mediaUrl = rendered.mediaUrl;
+          visualReview = rendered.visualReview;
+        } else {
+          mediaUrl = await renderSingleImage(post.id, post.title, post.textContent, slides, imagePrompt, post.editorialPillar);
+          visualReview = await reviewRenderedImage({ mediaUrl, title: post.title, editorialPillar: post.editorialPillar, brief });
+        }
         const currentReview = post.qualityReview && typeof post.qualityReview === "object" && !Array.isArray(post.qualityReview)
           ? post.qualityReview as Record<string, unknown>
           : {};
-        const visualBlocked = Boolean(visualReview && visualReview.score < 72);
+        const visualBlocked = !visualReview || visualReview.score < 72 || !visualReview.textLegible;
+        const visualSnapshot = visualReview
+          ? { ...visualReview, status: visualBlocked ? "NEEDS_REVISION" : "PASS", reviewedMediaUrl: mediaUrl }
+          : { status: "PENDING_HUMAN_REVIEW", reviewedMediaUrl: null, reason: "multimodal image inspection unavailable" };
         await prisma.post.update({ where: { id: post.id }, data: {
           mediaUrl,
-          ...(visualReview ? {
-            qualityScore: Math.min(post.qualityScore ?? 100, visualReview.score),
-            qualityStatus: visualBlocked ? QualityGateStatus.NEEDS_REVISION : post.qualityStatus,
-            status: visualBlocked ? PostStatus.DRAFT : post.status,
-            qualityReview: { ...currentReview, renderedImage: visualReview } as unknown as Prisma.InputJsonValue,
-            qualityReviewedAt: new Date(),
-          } : {}),
+          qualityScore: Math.min(post.qualityScore ?? 100, visualReview?.score ?? 0),
+          qualityStatus: visualBlocked ? QualityGateStatus.NEEDS_REVISION : post.qualityStatus,
+          status: visualBlocked ? PostStatus.DRAFT : post.status,
+          qualityReview: { ...currentReview, renderedImage: visualSnapshot } as unknown as Prisma.InputJsonValue,
+          qualityReviewedAt: new Date(),
         } });
+        await recordRenderedCreativeVersion({ postId: post.id, title: post.title, textContent: post.textContent, editorialPillar: post.editorialPillar, slides, prompt: imagePrompt, mediaUrl, review: visualReview ? { ...visualReview } : { status: "PENDING_HUMAN_REVIEW", score: 0 } });
       }
       return posts.map((post) => post.id);
     });
@@ -106,7 +144,10 @@ export const weeklyPostPipeline = inngest.createFunction(
     await step.run("send-telegram-approval", async () => {
       const posts = (await prisma.post.findMany({ where: { id: { in: renderedPostIds } } })).sort((left, right) => pillarOrder(left.editorialPillar) - pillarOrder(right.editorialPillar));
       for (const [index, post] of posts.entries()) {
-        if (post.status !== PostStatus.AWAITING_APPROVAL || post.qualityStatus !== QualityGateStatus.PASS) continue;
+        // A IA faz a triagem, mas a aprovação final continua sendo humana.
+        // Mesmo posts NEEDS_REVISION/DRAFT devem chegar ao Telegram para não
+        // desaparecerem silenciosamente da fila de decisão.
+        if (post.status !== PostStatus.AWAITING_APPROVAL && post.status !== PostStatus.DRAFT) continue;
         if (index > 0) await new Promise((resolve) => setTimeout(resolve, 3000));
         await sendBatchToTelegram([post]);
       }
@@ -123,9 +164,11 @@ export const publishApprovedPost = inngest.createFunction(
     const post = await step.run("load-approved-post", async () => {
       const data = event.data as PublishEventData;
       if (!data.postId) throw new Error("Evento de publicação sem postId.");
-      return prisma.post.findUnique({ where: { id: data.postId } });
+      return prisma.post.findUnique({ where: { id: data.postId }, include: { approvedCreativeBrief: { select: { id: true, postVersionId: true, reviewStatus: true, mediaUrl: true } } } });
     });
-    if (!post || (post.status !== PostStatus.APPROVED && post.status !== PostStatus.SCHEDULED)) return { skipped: true, reason: "post-not-approved" };
+    if (!post) return { skipped: true, reason: "post-not-found" };
+    const eligibility = getPublicationEligibility(post);
+    if (!eligibility.eligible) return { skipped: true, reason: `not-eligible:${eligibility.reasons.join(",")}` };
     const scheduledFor = new Date(post.scheduledDate ?? post.scheduledFor);
     if (Number.isNaN(scheduledFor.getTime())) throw new Error(`scheduledFor inválido para o post ${post.id}.`);
     if (scheduledFor > new Date()) {

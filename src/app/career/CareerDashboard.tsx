@@ -3,6 +3,8 @@
 import { useState } from "react";
 import { JobValidator } from "./JobValidator";
 import { ResumeBuilder } from "./ResumeBuilder";
+import { AdminNav } from "@/app/admin/AdminNav";
+import { CareerPreferences } from "./CareerPreferences";
 
 export interface CareerDashboardData {
   profile: { id: string; name: string; headline: string; about: string; location: string | null; linkedinUrl: string | null; skills: string[]; targetTitles: string[] } | null;
@@ -82,10 +84,12 @@ export function CareerDashboard({ initialData }: { initialData: CareerDashboardD
   }
 
   const profile = data.profile;
-  return <main className="admin-shell"><div className="admin-container">
+  return <main className="admin-shell"><div className="admin-container"><AdminNav current="career" />
     {toast && <div className={`admin-toast ${toast.kind}`} role="status">{toast.text}</div>}
     <header className="admin-header"><div><div className="admin-kicker">Job Hunter &amp; Career Engine</div><h1 className="admin-title">Radar de carreira</h1><p className="admin-subtitle">Busca autorizada, match de vagas, gaps de habilidades e SEO do LinkedIn.</p></div></header>
-    <section className="admin-panel"><div className="admin-toolbar"><button className="admin-button" disabled={busy} onClick={() => void loadDashboard()}>Carregar dados</button><button className="admin-button active" disabled={busy} onClick={() => void scan()}>Buscar vagas agora</button><button className="admin-button" disabled={busy} onClick={() => void audit()}>Auditar LinkedIn</button><button className="admin-button" onClick={() => { void fetch("/api/auth/logout", { method: "POST" }).then(() => window.location.assign("/career")); }}>Sair</button></div></section>
+    <section className="career-kpi-grid" aria-label="Resumo do radar de carreira"><article className="career-kpi"><span>Vagas analisadas</span><strong>{data.matches.length}</strong><small>ordenadas por aderência</small></article><article className="career-kpi"><span>Match alto</span><strong>{data.matches.filter((match) => match.score >= 75).length}</strong><small>75 pontos ou mais</small></article><article className="career-kpi"><span>Skills no perfil</span><strong>{profile?.skills.length ?? 0}</strong><small>usadas no cálculo de compatibilidade</small></article></section>
+    <section className="admin-panel"><div className="admin-toolbar"><button className="admin-button" disabled={busy} onClick={() => void loadDashboard()}>Carregar dados</button><button className="admin-button active" disabled={busy} onClick={() => void scan()}>Buscar vagas agora</button><a className="admin-button" href="/career/applications">Abrir pipeline de candidaturas</a><button className="admin-button" disabled={busy} onClick={() => void audit()}>Auditar LinkedIn</button><button className="admin-button" onClick={() => { void fetch("/api/auth/logout", { method: "POST" }).then(() => window.location.assign("/career")); }}>Sair</button></div></section>
+    <CareerPreferences token={token} />
     <section className="admin-panel"><div className="admin-section-heading"><div><div className="admin-kicker">Perfil RAG</div><h2>Perfil profissional</h2><p className="admin-subtitle">Esse contexto é usado para calcular aderência e gaps. Evite inserir dados sensíveis que não sejam necessários.</p></div></div>
       <form className="admin-edit" onSubmit={(event) => { event.preventDefault(); void saveProfile(event.currentTarget); }}>
         <input className="admin-input" name="name" required placeholder="Nome" defaultValue={profile?.name ?? ""} /><input className="admin-input" name="headline" required placeholder="Headline do LinkedIn" defaultValue={profile?.headline ?? ""} /><textarea className="admin-textarea" name="about" required placeholder="Resumo profissional" defaultValue={profile?.about ?? ""} /><input className="admin-input" name="location" placeholder="Localização" defaultValue={profile?.location ?? ""} /><input className="admin-input" name="linkedinUrl" type="url" placeholder="URL do LinkedIn" defaultValue={profile?.linkedinUrl ?? ""} /><input className="admin-input" name="skills" placeholder="Competências separadas por vírgula" defaultValue={profile?.skills.join(", ") ?? ""} /><input className="admin-input" name="targetTitles" placeholder="Cargos-alvo separados por vírgula" defaultValue={profile?.targetTitles.join(", ") ?? ""} /><button className="admin-button active" disabled={busy} type="submit">Salvar perfil</button>

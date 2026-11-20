@@ -46,6 +46,11 @@
     "People Management": ["people management", "gestao de pessoas", "gestão de pessoas"],
     "Stakeholder Management": ["stakeholder management", "gestao de stakeholders", "gestão de stakeholders"],
     "Executive Management": ["executive management", "gestao executiva", "gestão executiva"],
-    "Communication": ["communication", "comunicacao", "comunicação", "business communication"]
+    "Communication": ["communication", "comunicacao", "comunicação", "business communication", "written communication"],
+    "Data Annotation": ["data annotation", "data labeling", "label data", "annotating data"],
+    "Preference Data": ["preference data", "preference data collection", "human preference data"],
+    "Rubric Design": ["rubric design", "rubric creation", "evaluation rubric", "evaluation criteria"],
+    "Quality Assurance": ["quality assurance", "quality review", "quality control", "high quality bar"],
+    "Large Language Models (LLM)": ["llm", "large language model", "large language models", "frontier ai labs"]
   }
 }

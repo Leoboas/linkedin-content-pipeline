@@ -66,55 +66,329 @@ enum ResumeDraftStatus {
   ARCHIVED
 }
 
+enum JobApplicationStatus {
+  SAVED
+  READY_FOR_REVIEW
+  RESUME_PREPARED
+  APPLIED
+  INTERVIEW
+  REJECTED
+  WITHDRAWN
+}
+
+enum KnowledgeSourceType {
+  RESUME
+  REPOSITORY
+  DOCUMENT
+  USER_CONFIRMATION
+  EDITORIAL_PLAN
+  CONVERSATION
+}
+
+enum KnowledgeTrustLevel {
+  VERIFIED
+  HIGH
+  MEDIUM
+  NEEDS_REVIEW
+}
+
+enum KnowledgeVisibility {
+  PUBLIC_SAFE
+  INTERNAL_ONLY
+  RESTRICTED
+}
+
+enum ProfessionalFactCategory {
+  SKILL
+  CAREER
+  EDUCATION
+  LEADERSHIP
+  ARCHITECTURE
+  METRIC
+  LANGUAGE
+  POSITIONING
+}
+
+enum KnowledgeEvidenceStatus {
+  VERIFIED
+  DOCUMENTED
+  USER_CONFIRMED
+  NEEDS_REVIEW
+  RESTRICTED
+}
+
+enum ImplementationStatus {
+  IMPLEMENTED
+  USED_IN_PORTFOLIO
+  GENERAL_KNOWLEDGE
+  PLANNED
+  UNKNOWN
+}
+
+enum PortfolioProjectKind {
+  PORTFOLIO
+  SYNTHETIC_DEMO
+  ACADEMIC
+  OPEN_SOURCE
+  PLANNED
+}
+
+enum KnowledgeImportStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+  SKIPPED
+}
+
 enum QualityGateStatus {
   PASS
   NEEDS_REVISION
   BLOCKED
 }
 
+enum PostProjectRole {
+  PRIMARY
+  SECONDARY
+}
+
+enum MediaAssetOrigin {
+  GENERATED_AI
+  CHATGPT_UPLOAD
+  DASHBOARD_UPLOAD
+  TELEGRAM_UPLOAD
+  STOCK
+  IMPORTED
+}
+
+enum MediaStorageProvider {
+  VERCEL_BLOB
+  EXTERNAL
+}
+
+enum CreativeBriefMediaRole {
+  PRIMARY_IMAGE
+  CAROUSEL_SLIDE
+  FINAL_PDF
+  SOURCE_REFERENCE
+}
+
+enum ApprovalAuditEventType {
+  APPROVED
+  INVALIDATED
+  REJECTED
+}
+
 model EditorialLine {
-  id          String   @id @default(uuid()) @db.Uuid
-  name        String
-  themes      Json
-  toneOfVoice String   @db.Text
-  aidaRules   String   @db.Text
-  cvCases     String   @db.Text
-  language    String   @default("pt-BR")
-  lastStockRefillAt DateTime?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  posts       Post[]
+  id                   String    @id @default(uuid()) @db.Uuid
+  name                 String
+  themes               Json
+  toneOfVoice          String    @db.Text
+  aidaRules            String    @db.Text
+  cvCases              String    @db.Text
+  language             String    @default("pt-BR")
+  postsPerWeek         Int       @default(4)
+  languageDistribution Json      @default("{\"pt-BR\":4,\"en-US\":0}")
+  lastStockRefillAt    DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+  posts                Post[]
+}
+
+model KnowledgeSource {
+  id                String                   @id @default(uuid()) @db.Uuid
+  sourceKey         String                   @unique
+  type              KnowledgeSourceType
+  title             String
+  uri               String?
+  contentHash       String
+  trustLevel        KnowledgeTrustLevel
+  visibility        KnowledgeVisibility      @default(INTERNAL_ONLY)
+  asOf              DateTime?
+  importedAt        DateTime                 @default(now())
+  updatedAt         DateTime                 @updatedAt
+  documents         KnowledgeDocument[]
+  factSources       ProfessionalFactSource[]
+  experienceSources ExperienceSource[]
+  projectSources    ProjectSource[]
+  creativeEvidence  CreativeBriefEvidence[]
+
+  @@index([type, trustLevel])
+  @@index([contentHash])
+}
+
+model KnowledgeDocument {
+  id               String                  @id @default(uuid()) @db.Uuid
+  sourceId         String                  @db.Uuid
+  filename         String
+  mimeType         String
+  content          String                  @db.Text
+  contentHash      String
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+  source           KnowledgeSource         @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  creativeEvidence CreativeBriefEvidence[]
+
+  @@unique([sourceId, contentHash])
+  @@index([sourceId])
+}
+
+model ProfessionalFact {
+  id                   String                   @id @default(uuid()) @db.Uuid
+  factKey              String                   @unique
+  claim                String                   @db.Text
+  category             ProfessionalFactCategory
+  evidenceStatus       KnowledgeEvidenceStatus
+  implementationStatus ImplementationStatus
+  visibility           KnowledgeVisibility      @default(INTERNAL_ONLY)
+  publicAllowed        Boolean                  @default(false)
+  confidentialityNote  String?                  @db.Text
+  createdAt            DateTime                 @default(now())
+  updatedAt            DateTime                 @updatedAt
+  sources              ProfessionalFactSource[]
+  creativeEvidence     CreativeBriefEvidence[]
+
+  @@index([category, evidenceStatus])
+  @@index([publicAllowed, visibility])
+}
+
+model ProfessionalFactSource {
+  factId               String           @db.Uuid
+  sourceId             String           @db.Uuid
+  excerpt              String?          @db.Text
+  excerptPublicAllowed Boolean          @default(false)
+  verifiedAt           DateTime?
+  fact                 ProfessionalFact @relation(fields: [factId], references: [id], onDelete: Cascade)
+  source               KnowledgeSource  @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@id([factId, sourceId])
+}
+
+model ProfessionalExperience {
+  id                  String                  @id @default(uuid()) @db.Uuid
+  experienceKey       String                  @unique
+  company             String
+  title               String
+  startDate           DateTime?
+  endDate             DateTime?
+  current             Boolean                 @default(false)
+  summary             String                  @db.Text
+  technologies        Json
+  editorialAngles     Json?
+  evidenceStatus      KnowledgeEvidenceStatus
+  visibility          KnowledgeVisibility     @default(INTERNAL_ONLY)
+  publicAllowed       Boolean                 @default(false)
+  confidentialityNote String?                 @db.Text
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+  sources             ExperienceSource[]
+  creativeEvidence    CreativeBriefEvidence[]
+
+  @@index([company, current])
+  @@index([publicAllowed, evidenceStatus])
+}
+
+model ExperienceSource {
+  experienceId String                 @db.Uuid
+  sourceId     String                 @db.Uuid
+  experience   ProfessionalExperience @relation(fields: [experienceId], references: [id], onDelete: Cascade)
+  source       KnowledgeSource        @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@id([experienceId, sourceId])
+}
+
+model PortfolioProject {
+  id                   String                  @id @default(uuid()) @db.Uuid
+  projectKey           String                  @unique
+  name                 String
+  kind                 PortfolioProjectKind
+  publicUrl            String?
+  summary              String                  @db.Text
+  technologies         Json
+  themes               Json?
+  limitations          Json?
+  implementationStatus ImplementationStatus
+  evidenceStatus       KnowledgeEvidenceStatus
+  visibility           KnowledgeVisibility     @default(PUBLIC_SAFE)
+  publicAllowed        Boolean                 @default(true)
+  confidentialityNote  String?                 @db.Text
+  createdAt            DateTime                @default(now())
+  updatedAt            DateTime                @updatedAt
+  sources              ProjectSource[]
+  postLinks            PostProject[]
+  creativeEvidence     CreativeBriefEvidence[]
+
+  @@index([kind, implementationStatus])
+  @@index([publicAllowed, evidenceStatus])
+}
+
+model ProjectSource {
+  projectId String           @db.Uuid
+  sourceId  String           @db.Uuid
+  project   PortfolioProject @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  source    KnowledgeSource  @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, sourceId])
+}
+
+model KnowledgeImportRun {
+  id             String                @id @default(uuid()) @db.Uuid
+  importKey      String
+  contentHash    String
+  status         KnowledgeImportStatus
+  filesProcessed Int                   @default(0)
+  recordsCreated Int                   @default(0)
+  recordsUpdated Int                   @default(0)
+  recordsSkipped Int                   @default(0)
+  errorMessage   String?               @db.Text
+  startedAt      DateTime              @default(now())
+  completedAt    DateTime?
+
+  @@unique([importKey, contentHash])
+  @@index([status, startedAt])
 }
 
 model Post {
-  id              String         @id @default(uuid()) @db.Uuid
-  generationKey   String?        @unique
-  editorialLineId String?        @db.Uuid
-  editorialPillar EditorialPillar @default(TOFU)
-  funnelStage     FunnelStage
-  formatType      FormatType
-  title           String
-  textContent     String         @db.Text
-  imagePrompt     String?        @db.Text
-  slidesJson      Json?
-  mediaUrl        String?
-  status          PostStatus     @default(PENDING)
-  scheduledFor    DateTime
-  scheduledDate   DateTime?
-  publishedAt     DateTime?
-  linkedinPostId  String?
-  engagementScore Float?
-  engagementLabel String?
-  qualityScore Float?
-  qualityStatus QualityGateStatus?
-  qualityReview Json?
-  qualityReviewedAt DateTime?
-  feedbackText    String?        @db.Text
-  rejectionFeedback String?      @db.Text
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
-  editorialLine   EditorialLine? @relation(fields: [editorialLineId], references: [id], onDelete: SetNull)
-  metrics         PostMetric[]
+  id                      String              @id @default(uuid()) @db.Uuid
+  generationKey           String?             @unique
+  editorialLineId         String?             @db.Uuid
+  editorialPillar         EditorialPillar     @default(TOFU)
+  funnelStage             FunnelStage
+  formatType              FormatType
+  language                String              @default("pt-BR")
+  editorialObjective      String?             @db.Text
+  associatedProject       String?
+  topic                   String?
+  mediaError              String?             @db.Text
+  title                   String
+  textContent             String              @db.Text
+  imagePrompt             String?             @db.Text
+  slidesJson              Json?
+  mediaUrl                String?
+  status                  PostStatus          @default(PENDING)
+  scheduledFor            DateTime
+  scheduledDate           DateTime?
+  publishedAt             DateTime?
+  linkedinPostId          String?
+  engagementScore         Float?
+  engagementLabel         String?
+  qualityScore            Float?
+  qualityStatus           QualityGateStatus?
+  qualityReview           Json?
+  qualityReviewedAt       DateTime?
+  feedbackText            String?             @db.Text
+  rejectionFeedback       String?             @db.Text
+  createdAt               DateTime            @default(now())
+  updatedAt               DateTime            @updatedAt
+  editorialLine           EditorialLine?      @relation(fields: [editorialLineId], references: [id], onDelete: SetNull)
+  metrics                 PostMetric[]
+  versions                PostVersion[]       @relation("PostVersions")
+  creativeBriefs          CreativeBrief[]     @relation("PostCreativeBriefs")
+  projectLinks            PostProject[]
+  currentVersionId        String?             @db.Uuid
+  currentVersion          PostVersion?        @relation("PostCurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+  approvedCreativeBriefId String?             @db.Uuid
+  approvedCreativeBrief   CreativeBrief?      @relation("CurrentPostApproval", fields: [approvedCreativeBriefId], references: [id], onDelete: SetNull)
+  approvalEvents          PostApprovalEvent[]
 
   @@index([status, scheduledFor])
   @@index([editorialLineId])
@@ -122,145 +396,384 @@ model Post {
   @@index([qualityStatus, qualityScore])
 }
 
+model PostVersion {
+  id              String              @id @default(uuid()) @db.Uuid
+  postId          String              @db.Uuid
+  title           String
+  textContent     String              @db.Text
+  slidesJson      Json?
+  imagePrompt     String?             @db.Text
+  mediaUrl        String?
+  reason          String?             @db.Text
+  versionNumber   Int?
+  contentHash     String?
+  createdAt       DateTime            @default(now())
+  post            Post                @relation("PostVersions", fields: [postId], references: [id], onDelete: Cascade)
+  currentForPosts Post[]              @relation("PostCurrentVersion")
+  creativeBriefs  CreativeBrief[]
+  approvalEvents  PostApprovalEvent[]
+
+  @@unique([postId, versionNumber])
+  @@index([postId, createdAt])
+}
+
+model CreativeBrief {
+  id                String                  @id @default(uuid()) @db.Uuid
+  postId            String                  @db.Uuid
+  version           Int
+  thesis            String                  @db.Text
+  technicalConflict String                  @db.Text
+  concreteProblem   String                  @db.Text
+  visualConcept     String                  @db.Text
+  shortOverlayTitle String?
+  evidenceSnapshot  Json?
+  effectivePrompt   String?                 @db.Text
+  mediaUrl          String?
+  aestheticScore    Int?
+  semanticScore     Int?
+  technicalScore    Int?
+  reviewStatus      QualityGateStatus?
+  reviewSnapshot    Json?
+  postVersionId     String?                 @db.Uuid
+  creativeRevision  Int?
+  language          String?
+  contentHash       String?
+  mediaHash         String?
+  contentBrief      Json?
+  visualBrief       Json?
+  createdAt         DateTime                @default(now())
+  post              Post                    @relation("PostCreativeBriefs", fields: [postId], references: [id], onDelete: Cascade)
+  postVersion       PostVersion?            @relation(fields: [postVersionId], references: [id], onDelete: Cascade)
+  media             CreativeBriefMedia[]
+  evidence          CreativeBriefEvidence[]
+  approvedByPosts   Post[]                  @relation("CurrentPostApproval")
+  approvalEvents    PostApprovalEvent[]
+
+  @@unique([postId, version])
+  @@unique([postVersionId, creativeRevision])
+  @@index([postId, createdAt])
+  @@index([postVersionId, createdAt])
+}
+
+model PostProject {
+  id          String           @id @default(uuid()) @db.Uuid
+  postId      String           @db.Uuid
+  projectId   String           @db.Uuid
+  role        PostProjectRole
+  confirmedAt DateTime         @default(now())
+  confirmedBy String?
+  auditNote   String?          @db.Text
+  createdAt   DateTime         @default(now())
+  post        Post             @relation(fields: [postId], references: [id], onDelete: Cascade)
+  project     PortfolioProject @relation(fields: [projectId], references: [id], onDelete: Restrict)
+
+  @@unique([postId, projectId])
+  @@index([projectId, role])
+}
+
+model CreativeBriefEvidence {
+  id                       String                  @id @default(uuid()) @db.Uuid
+  creativeBriefId          String                  @db.Uuid
+  evidenceKey              String
+  factId                   String?                 @db.Uuid
+  experienceId             String?                 @db.Uuid
+  projectId                String?                 @db.Uuid
+  sourceId                 String                  @db.Uuid
+  knowledgeDocumentId      String?                 @db.Uuid
+  claimSnapshot            String                  @db.Text
+  authorizedExcerpt        String?                 @db.Text
+  sourceHash               String
+  trustLevelSnapshot       KnowledgeTrustLevel
+  visibilitySnapshot       KnowledgeVisibility
+  sourceVisibilitySnapshot KnowledgeVisibility
+  implementationStatus     ImplementationStatus
+  publicAllowedSnapshot    Boolean
+  createdAt                DateTime                @default(now())
+  creativeBrief            CreativeBrief           @relation(fields: [creativeBriefId], references: [id], onDelete: Cascade)
+  fact                     ProfessionalFact?       @relation(fields: [factId], references: [id], onDelete: Restrict)
+  experience               ProfessionalExperience? @relation(fields: [experienceId], references: [id], onDelete: Restrict)
+  project                  PortfolioProject?       @relation(fields: [projectId], references: [id], onDelete: Restrict)
+  source                   KnowledgeSource         @relation(fields: [sourceId], references: [id], onDelete: Restrict)
+  document                 KnowledgeDocument?      @relation(fields: [knowledgeDocumentId], references: [id], onDelete: Restrict)
+
+  @@unique([creativeBriefId, evidenceKey])
+  @@index([factId])
+  @@index([experienceId])
+  @@index([projectId])
+  @@index([sourceId])
+}
+
+model MediaAsset {
+  id              String               @id @default(uuid()) @db.Uuid
+  origin          MediaAssetOrigin
+  storageProvider MediaStorageProvider
+  storageKey      String?              @unique
+  storageUrl      String               @db.Text
+  sha256          String
+  contentType     String
+  byteSize        BigInt?
+  width           Int?
+  height          Int?
+  metadata        Json?
+  createdAt       DateTime             @default(now())
+  createdBy       String?
+  briefLinks      CreativeBriefMedia[]
+
+  @@index([sha256])
+  @@index([origin, createdAt])
+}
+
+model CreativeBriefMedia {
+  id              String                 @id @default(uuid()) @db.Uuid
+  creativeBriefId String                 @db.Uuid
+  mediaAssetId    String                 @db.Uuid
+  role            CreativeBriefMediaRole
+  position        Int                    @default(0)
+  createdAt       DateTime               @default(now())
+  creativeBrief   CreativeBrief          @relation(fields: [creativeBriefId], references: [id], onDelete: Cascade)
+  mediaAsset      MediaAsset             @relation(fields: [mediaAssetId], references: [id], onDelete: Restrict)
+
+  @@unique([creativeBriefId, role, position])
+  @@index([mediaAssetId])
+}
+
+model PostApprovalEvent {
+  id              String                 @id @default(uuid()) @db.Uuid
+  postId          String                 @db.Uuid
+  postVersionId   String                 @db.Uuid
+  creativeBriefId String                 @db.Uuid
+  eventType       ApprovalAuditEventType
+  actor           String?
+  reason          String?                @db.Text
+  createdAt       DateTime               @default(now())
+  post            Post                   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  postVersion     PostVersion            @relation(fields: [postVersionId], references: [id], onDelete: Cascade)
+  creativeBrief   CreativeBrief          @relation(fields: [creativeBriefId], references: [id], onDelete: Cascade)
+
+  @@index([postId, createdAt])
+  @@index([postVersionId, creativeBriefId])
+}
+
 model PostMetric {
-  id              String   @id @default(uuid()) @db.Uuid
-  postId          String   @db.Uuid
-  impressions     Int      @default(0)
-  reactions       Int      @default(0)
-  comments        Int      @default(0)
-  shares          Int      @default(0)
-  profileViews    Int      @default(0)
-  engagementScore Float?
-  capturedAt      DateTime @default(now())
-  post            Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  id                       String   @id @default(uuid()) @db.Uuid
+  postId                   String   @db.Uuid
+  linkedinPostId           String?
+  impressions              Int?
+  membersReached           Int?
+  reactions                Int?
+  comments                 Int?
+  shares                   Int?
+  postSaves                Int?
+  postSends                Int?
+  linkClicks               Int?
+  premiumCtaClicks         Int?
+  followersGained          Int?
+  profileViews             Int?
+  profileViewsFromContent  Int?
+  engagementScore          Float?
+  interactionRate          Float?
+  source                   String   @default("LEGACY")
+  apiVersion               String?
+  measurementWindow        String   @default("LIFETIME")
+  availability             String   @default("UNKNOWN")
+  publishedAtSnapshot      DateTime?
+  exposureHours            Float?
+  idempotencyKey           String?  @unique
+  capturedAt               DateTime @default(now())
+  post                     Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
 
   @@index([postId, capturedAt])
+  @@index([postId, measurementWindow, source])
   @@index([engagementScore])
 }
 
+model ProfileMetric {
+  id              String   @id @default(uuid()) @db.Uuid
+  metricType      String
+  value           Int?
+  source           String   @default("MANUAL")
+  sourceNote       String?  @db.Text
+  apiVersion       String?
+  availability     String   @default("AVAILABLE")
+  periodStart      DateTime?
+  periodEnd        DateTime?
+  capturedAt       DateTime @default(now())
+  idempotencyKey   String?  @unique
+
+  @@index([metricType, capturedAt])
+  @@index([source, capturedAt])
+}
+
+model LinkedInApiCall {
+  id         String   @id @default(uuid()) @db.Uuid
+  endpoint   String
+  operation  String
+  statusCode Int?
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([operation, createdAt])
+}
+
 model ContentReference {
-  id          String   @id @default(uuid()) @db.Uuid
-  content     String   @db.Text
-  sourceUrl   String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id        String   @id @default(uuid()) @db.Uuid
+  content   String   @db.Text
+  sourceUrl String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([createdAt])
 }
 
 model RejectionPattern {
-  id           String   @id @default(uuid()) @db.Uuid
-  pattern      String   @unique
-  occurrenceCount Int   @default(0)
-  lastFeedback String?  @db.Text
-  lastSeenAt   DateTime @default(now())
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id              String   @id @default(uuid()) @db.Uuid
+  pattern         String   @unique
+  occurrenceCount Int      @default(0)
+  lastFeedback    String?  @db.Text
+  lastSeenAt      DateTime @default(now())
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   @@index([lastSeenAt])
   @@index([occurrenceCount])
 }
 
 model CandidateProfile {
-  id             String   @id @default(uuid()) @db.Uuid
-  name           String
-  headline       String   @db.Text
-  about          String   @db.Text
-  location       String?
-  linkedinUrl    String?
-  skills         Json
-  experience     Json?
-  education      Json?
-  targetTitles   Json
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  documents      CareerDocument[]
-  matches        JobMatch[]
-  seoAudits      LinkedInSeoAudit[]
-  resumeDrafts   ResumeDraft[]
+  id           String             @id @default(uuid()) @db.Uuid
+  name         String
+  headline     String             @db.Text
+  about        String             @db.Text
+  location     String?
+  linkedinUrl  String?
+  skills       Json
+  experience   Json?
+  education    Json?
+  targetTitles Json
+  createdAt    DateTime           @default(now())
+  updatedAt    DateTime           @updatedAt
+  documents    CareerDocument[]
+  matches      JobMatch[]
+  seoAudits    LinkedInSeoAudit[]
+  resumeDrafts ResumeDraft[]
+  searchPreferences JobSearchPreference?
+  applications JobApplication[]
+}
+
+model JobSearchPreference {
+  id                 String           @id @default(uuid()) @db.Uuid
+  profileId          String           @unique @db.Uuid
+  targetTitles       Json
+  locations          Json
+  minimumMatchScore  Int              @default(70)
+  remoteOnly         Boolean          @default(false)
+  autoApplyEnabled   Boolean          @default(false)
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  profile            CandidateProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 }
 
 model CareerDocument {
-  id          String   @id @default(uuid()) @db.Uuid
-  profileId   String   @db.Uuid
-  title       String
-  content     String   @db.Text
-  sourceUrl   String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-  profile     CandidateProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  id        String           @id @default(uuid()) @db.Uuid
+  profileId String           @db.Uuid
+  title     String
+  content   String           @db.Text
+  sourceUrl String?
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  profile   CandidateProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
   @@index([profileId, createdAt])
 }
 
 model ResumeDraft {
-  id             String           @id @default(uuid()) @db.Uuid
-  profileId      String           @db.Uuid
-  sourceJobId    String?          @db.Uuid
+  id             String            @id @default(uuid()) @db.Uuid
+  profileId      String            @db.Uuid
+  sourceJobId    String?           @db.Uuid
   targetRole     String
   template       String
-  jobDescription String?          @db.Text
+  jobDescription String?           @db.Text
   content        Json
-  atsScore       Float            @default(0)
+  atsScore       Float             @default(0)
   validation     Json?
   status         ResumeDraftStatus @default(DRAFT)
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
-  profile        CandidateProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
-  sourceJob      JobListing?      @relation(fields: [sourceJobId], references: [id], onDelete: SetNull)
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+  profile        CandidateProfile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  sourceJob      JobListing?       @relation(fields: [sourceJobId], references: [id], onDelete: SetNull)
+  applications   JobApplication[]
 
   @@index([profileId, updatedAt])
   @@index([targetRole, atsScore])
 }
 
 model JobListing {
-  id                 String            @id @default(uuid()) @db.Uuid
-  source             JobSource
-  externalId         String
-  title              String
-  company            String?
-  location           String?
-  remote             Boolean           @default(false)
-  url                String
-  description        String            @db.Text
-  sourcePublishedAt  DateTime?
-  discoveredAt       DateTime          @default(now())
-  status             JobListingStatus  @default(OPEN)
-  rawData            Json?
-  matches            JobMatch[]
-  resumeDrafts       ResumeDraft[]
+  id                String           @id @default(uuid()) @db.Uuid
+  source            JobSource
+  externalId        String
+  title             String
+  company           String?
+  location          String?
+  remote            Boolean          @default(false)
+  url               String
+  description       String           @db.Text
+  sourcePublishedAt DateTime?
+  discoveredAt      DateTime         @default(now())
+  status            JobListingStatus @default(OPEN)
+  rawData           Json?
+  matches           JobMatch[]
+  resumeDrafts      ResumeDraft[]
+  applications      JobApplication[]
 
   @@unique([source, externalId])
   @@index([status, discoveredAt])
   @@index([title, location])
 }
 
+model JobApplication {
+  id             String                @id @default(uuid()) @db.Uuid
+  profileId      String                @db.Uuid
+  jobId          String                @db.Uuid
+  resumeDraftId  String?               @db.Uuid
+  status         JobApplicationStatus  @default(SAVED)
+  notes          String?               @db.Text
+  appliedAt      DateTime?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+  profile        CandidateProfile      @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  job            JobListing            @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  resumeDraft    ResumeDraft?          @relation(fields: [resumeDraftId], references: [id], onDelete: SetNull)
+
+  @@unique([profileId, jobId])
+  @@index([profileId, status, updatedAt])
+  @@index([jobId, status])
+}
+
 model JobMatch {
-  id              String          @id @default(uuid()) @db.Uuid
-  profileId       String          @db.Uuid
-  jobId           String          @db.Uuid
-  score           Float
-  label           String
-  matchedSkills   Json
-  skillGaps       Json
-  rationale       String          @db.Text
-  ragContext      String?         @db.Text
-  createdAt       DateTime        @default(now())
-  profile         CandidateProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
-  job             JobListing      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  id            String           @id @default(uuid()) @db.Uuid
+  profileId     String           @db.Uuid
+  jobId         String           @db.Uuid
+  score         Float
+  label         String
+  matchedSkills Json
+  skillGaps     Json
+  rationale     String           @db.Text
+  ragContext    String?          @db.Text
+  createdAt     DateTime         @default(now())
+  profile       CandidateProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  job           JobListing       @relation(fields: [jobId], references: [id], onDelete: Cascade)
 
   @@unique([profileId, jobId])
   @@index([profileId, score])
 }
 
 model LinkedInSeoAudit {
-  id              String          @id @default(uuid()) @db.Uuid
-  profileId       String          @db.Uuid
+  id              String           @id @default(uuid()) @db.Uuid
+  profileId       String           @db.Uuid
   score           Float
   strengths       Json
   recommendations Json
   snapshot        Json
-  createdAt       DateTime        @default(now())
+  createdAt       DateTime         @default(now())
   profile         CandidateProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
 
   @@index([profileId, createdAt])

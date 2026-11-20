@@ -5,7 +5,7 @@ import { publishDuePost } from "@/lib/publishing";
 import { reformulatePostFromFeedback } from "@/lib/reformulation";
 import { reconcileOverduePosts } from "@/lib/scheduler";
 import { requestBatchIfStockIsLow } from "@/lib/stock";
-import { syncLinkedInPostMetrics } from "@/lib/linkedin-analytics";
+import { syncLinkedInPostMetrics, syncLinkedInProfileMetrics } from "@/lib/linkedin-analytics";
 
 export const maxDuration = 300;
 
@@ -27,9 +27,11 @@ export async function GET(request: Request): Promise<NextResponse> {
   let regenerated = 0;
   let published = 0;
   let analytics: Awaited<ReturnType<typeof syncLinkedInPostMetrics>> | null = null;
+  let profileAnalytics: Awaited<ReturnType<typeof syncLinkedInProfileMetrics>> | null = null;
 
   try {
     analytics = await syncLinkedInPostMetrics();
+    profileAnalytics = await syncLinkedInProfileMetrics();
   } catch (error) {
     errors.push(`analytics:${error instanceof Error ? error.message : "erro desconhecido"}`);
   }
@@ -111,6 +113,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     regenerated,
     published,
     analytics,
+    profileAnalytics,
     stock,
     errors,
   }, { status: errors.length === 0 ? 200 : 207 });

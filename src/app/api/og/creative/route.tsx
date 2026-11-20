@@ -1,6 +1,7 @@
 import { ImageResponse } from "@vercel/og";
 
 export const runtime = "edge";
+export const dynamic = "force-dynamic";
 
 function clean(value: string | null, fallback: string, maxLength: number): string {
   const normalized = (value ?? fallback).replace(/[<>]/g, "").trim();
@@ -40,6 +41,8 @@ export function GET(request: Request): ImageResponse {
   const background = params.get("background");
   const title = clean(params.get("title"), "Insight de engenharia", 160);
   const pillar = clean(params.get("pillar"), "TECH · DATA · GROWTH", 40).toUpperCase();
+  const format = params.get("format") ?? "editorial-cover";
+  const vertical = format === "editorial-cover";
   const lines = titleLines(title);
 
   if (background && !isRemoteUrl(background)) {
@@ -63,10 +66,10 @@ export function GET(request: Request): ImageResponse {
           <div style={{ display: "flex", width: 130, height: 7, borderRadius: 8, background: "#0EA5E9" }} />
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 8, color: "#CBD5E1", fontSize: 22 }}>
-          <span>Autonomous LinkedIn Content Engine</span><span>feito para compartilhar</span>
+          <span>LinkedIn · conteúdo técnico</span><span>feito para compartilhar</span>
         </div>
       </div>
     </div>,
-    { width: 1080, height: 1080 },
+    { width: 1080, height: vertical ? 1350 : 1080 },
   );
 }

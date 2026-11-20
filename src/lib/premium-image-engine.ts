@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { fetchStockImageUrl, generateImageZeroCost } from "@/lib/image-prompt-engine";
+import { type VisualFormat, visualFormatForPost, visualFormatPrompt } from "../../config/creative-direction";
 
 const IMAGEN_MODEL = "imagen-3.0-generate-002";
 const GEMINI_GENERATE_IMAGES_URL = `https://generativelanguage.googleapis.com/v1beta/models/${IMAGEN_MODEL}:generateImages`;
@@ -21,7 +22,7 @@ function normalizePillar(pillar: string): string {
   return pillar.trim().toUpperCase();
 }
 
-export function refineImagePromptForLinkedIn(topic: string, pillar: string): string {
+export function refineImagePromptForLinkedIn(topic: string, pillar: string, visualFormat: VisualFormat = visualFormatForPost("SINGLE_IMAGE", pillar)): string {
   const normalized = normalizePillar(pillar);
   const safeTopic = topic.replace(/\s+/g, " ").trim().slice(0, 500);
 
@@ -33,6 +34,7 @@ export function refineImagePromptForLinkedIn(topic: string, pillar: string): str
       "Dark slate and deep navy environment with restrained cyan and amber accents.",
       "NO distorted human features, NO generic AI faces, NO neon oversaturation.",
       "No text, typography, letters, numbers, logos, watermarks, UI or readable symbols.",
+      visualFormatPrompt(visualFormat),
     ].join(" ");
   }
 
@@ -42,6 +44,7 @@ export function refineImagePromptForLinkedIn(topic: string, pillar: string): str
       "Professional tech aesthetics using slate navy blue, deep indigo and subtle gray palette.",
       "Clean lines, elegant composition, Notion and Stripe design system style, balanced negative space.",
       "No text, typography, letters, numbers, logos, watermarks, UI or readable symbols.",
+      visualFormatPrompt(visualFormat),
       "NO messy artifacts, NO generic AI collage, NO neon oversaturation.",
     ].join(" ");
   }
@@ -50,6 +53,7 @@ export function refineImagePromptForLinkedIn(topic: string, pillar: string): str
     `A clean isometric 3D data architecture diagram representing ${safeTopic}.`,
     "Matte glassmorphism textures, frosted glass accents, subtle volumetric lighting and professional enterprise software aesthetics.",
     "Minimalist isolated studio background, precise geometry, clear visual hierarchy and generous negative space.",
+    visualFormatPrompt(visualFormat),
     "No text, typography, letters, numbers, logos, watermarks, UI or readable symbols.",
     "NO messy artifacts, NO generic AI collage, NO neon oversaturation.",
   ].join(" ");
@@ -90,19 +94,19 @@ async function requestJson(url: string, headers: HeadersInit, body: unknown): Pr
   return payload;
 }
 
-async function generateWithGemini(prompt: string): Promise<PremiumImageResult> {
+async function generateWithGemini(prompt: string, visualFormat: VisualFormat): Promise<PremiumImageResult> {
   const key = requireGeminiKey();
   let payload: unknown;
   try {
     payload = await requestJson(`${GEMINI_GENERATE_IMAGES_URL}?key=${encodeURIComponent(key)}`, {}, {
       prompt,
-      config: { numberOfImages: 1, outputMimeType: "image/jpeg", aspectRatio: "1:1" },
+      config: { numberOfImages: 1, outputMimeType: "image/jpeg", aspectRatio: visualFormat === "editorial-cover" ? "4:5" : "1:1" },
     });
   } catch (legacyError) {
     console.warn("[premium-image] generateImages indisponível; tentando predict", legacyError instanceof Error ? legacyError.message : String(legacyError));
     payload = await requestJson(GEMINI_PREDICT_URL, { "x-goog-api-key": key }, {
       instances: [{ prompt }],
-      parameters: { sampleCount: 1, aspectRatio: "1:1", outputOptions: { mimeType: "image/jpeg" } },
+      parameters: { sampleCount: 1, aspectRatio: visualFormat === "editorial-cover" ? "4:5" : "1:1", outputOptions: { mimeType: "image/jpeg" } },
     });
   }
   const encoded = base64Image(payload);
@@ -110,7 +114,7 @@ async function generateWithGemini(prompt: string): Promise<PremiumImageResult> {
   return { buffer: Buffer.from(encoded, "base64"), contentType: "image/jpeg", provider: "gemini-imagen-3" };
 }
 
-async function generateFallback(topic: string, pillar: string): Promise<PremiumImageResult> {
+async function generateFallback(topic: string, pillar: string, visualFormat: VisualFormat): Promise<PremiumImageResult> {
   const stockUrl = await fetchStockImageUrl(`${topic} technology enterprise architecture`);
   if (stockUrl) {
     const response = await fetch(stockUrl, { cache: "no-store", signal: AbortSignal.timeout(20_000) });
@@ -119,22 +123,22 @@ async function generateFallback(topic: string, pillar: string): Promise<PremiumI
       return { buffer: Buffer.from(await response.arrayBuffer()), contentType, provider: "unsplash" };
     }
   }
-  return { buffer: await generateImageZeroCost(topic, pillar), contentType: "image/png", provider: "satori" };
+  return { buffer: await generateImageZeroCost(topic, pillar, visualFormat), contentType: "image/png", provider: "satori" };
 }
 
-export async function generatePremiumPostImage(topic: string, pillar: string, additionalPrompt?: string): Promise<PremiumImageResult> {
+export async function generatePremiumPostImage(topic: string, pillar: string, additionalPrompt?: string, visualFormat: VisualFormat = visualFormatForPost("SINGLE_IMAGE", pillar)): Promise<PremiumImageResult> {
   const prompt = [
-    refineImagePromptForLinkedIn(topic, pillar),
+    refineImagePromptForLinkedIn(topic, pillar, visualFormat),
     additionalPrompt?.trim() ? `Additional art direction: ${additionalPrompt.trim().slice(0, 1_000)}` : "",
   ].filter(Boolean).join(" ");
   try {
-    return await generateWithGemini(prompt);
+    return await generateWithGemini(prompt, visualFormat);
   } catch (error) {
     console.error("[premium-image] Gemini Imagen falhou; usando fallback visual", {
       topic: topic.slice(0, 120),
       pillar,
       error: error instanceof Error ? error.message : String(error),
     });
-    return generateFallback(topic, pillar);
+    return generateFallback(topic, pillar, visualFormat);
   }
 }

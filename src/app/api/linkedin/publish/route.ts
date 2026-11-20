@@ -3,6 +3,7 @@ import { PostStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { publishDuePost } from "@/lib/publishing";
 import { isDashboardAuthorized } from "@/lib/dashboard-auth";
+import { getPublicationEligibility } from "@/lib/publication-eligibility";
 
 function isAuthorized(request: Request): boolean {
   if (isDashboardAuthorized(request)) return true;
@@ -23,10 +24,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "postId é obrigatório." }, { status: 400 });
   }
 
-  const post = await prisma.post.findUnique({ where: { id: body.postId } });
+  const post = await prisma.post.findUnique({ where: { id: body.postId }, include: { approvedCreativeBrief: { select: { id: true, postVersionId: true, reviewStatus: true, mediaUrl: true } } } });
   if (!post) return NextResponse.json({ error: "Post não encontrado." }, { status: 404 });
-  if (post.status !== PostStatus.APPROVED && post.status !== PostStatus.SCHEDULED) {
-    return NextResponse.json({ error: "O post precisa estar aprovado ou agendado." }, { status: 409 });
+  const eligibility = getPublicationEligibility(post);
+  if (!eligibility.eligible) {
+    return NextResponse.json({ error: "O post não passou pelo quality gate.", reasons: eligibility.reasons }, { status: 409 });
   }
 
   try {

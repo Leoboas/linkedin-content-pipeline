@@ -53,9 +53,14 @@ async function renderCarouselPdf(postId: string, title: string, slides: Generate
     });
     if (slide.code) params.set("code", slide.code);
     if (slide.metrics) params.set("metrics", JSON.stringify(slide.metrics));
+    params.set("v", String(Date.now()));
     const response = await fetch(`${getAppUrl()}/api/og/slide?${params.toString()}`, { cache: "no-store" });
     if (!response.ok) throw new Error(`Falha ao renderizar lâmina ${index + 1}: ${response.status}`);
-    const image = await pdf.embedPng(await response.arrayBuffer());
+    const bytes = await response.arrayBuffer();
+    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+    const image = contentType.includes("jpeg") || contentType.includes("jpg")
+      ? await pdf.embedJpg(bytes)
+      : await pdf.embedPng(bytes);
     const page = pdf.addPage([1600, 900]);
     page.drawImage(image, { x: 0, y: 0, width: 1600, height: 900 });
   }
@@ -69,8 +74,9 @@ async function renderCarouselPdf(postId: string, title: string, slides: Generate
 async function main(): Promise<void> {
   await loadEnvFile(".env.local");
   await loadEnvFile(".env");
-  const batchKey = `manual-weekly:${new Date().toISOString()}`;
-  const postIds = await generateNewPostBatch({ batchKey });
+  const startDate = new Date();
+  const batchKey = `manual-reset:${startDate.toISOString().slice(0, 10)}`;
+  const postIds = await generateNewPostBatch({ batchKey, startDate });
   const posts = await prisma.post.findMany({ where: { id: { in: postIds } } });
 
   for (const post of posts) {
@@ -87,8 +93,9 @@ async function main(): Promise<void> {
     await prisma.post.update({ where: { id: post.id }, data: { mediaUrl } });
   }
 
-  const readyPosts = (await prisma.post.findMany({ where: { id: { in: postIds }, status: PostStatus.AWAITING_APPROVAL } }))
-    .sort((left, right) => ["TOFU", "MOFU", "BOFU"].indexOf(left.editorialPillar) - ["TOFU", "MOFU", "BOFU"].indexOf(right.editorialPillar));
+  const readyPosts = (await prisma.post.findMany({ where: { id: { in: postIds }, status: { in: [PostStatus.AWAITING_APPROVAL, PostStatus.DRAFT] } } }))
+    .sort((left, right) => (left.scheduledDate ?? left.scheduledFor).getTime() - (right.scheduledDate ?? right.scheduledFor).getTime())
+    .slice(0, 3);
   await sendBatchToTelegram(readyPosts);
 
   console.log("Novo calendário semanal criado e enviado:");

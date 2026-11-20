@@ -115,9 +115,9 @@ async function callGroq(request: ChatRequest): Promise<ChatResponse> {
   const apiKey = process.env.GROQ_API_KEY;
   if (!apiKey) throw new Error("GROQ_API_KEY nao configurada.");
   const configuredModel = process.env.GROQ_MODEL?.trim();
-  const model = configuredModel && !/gpt-oss|llama-3\.1-8b-instant/i.test(configuredModel)
+  const model = configuredModel && /llama-3\.1-8b-instant|llama3-8b-8192/i.test(configuredModel)
     ? configuredModel
-    : "llama-3.3-70b-versatile";
+    : "llama-3.1-8b-instant";
   const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
     method: "POST",
     headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },

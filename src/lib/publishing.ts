@@ -1,6 +1,7 @@
 import { PostStatus } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { publishPostToLinkedIn } from "@/lib/linkedin";
+import { getPublicationEligibility } from "@/lib/publication-eligibility";
 
 export async function publishDuePost(postId: string): Promise<
   { published: true; id: string } | { published: false; reason: string }
@@ -30,11 +31,17 @@ export async function publishDuePost(postId: string): Promise<
     return { published: false, reason: "post-not-due-or-already-claimed" };
   }
 
-  const post = await prisma.post.findUnique({ where: { id: postId } });
+  const post = await prisma.post.findUnique({ where: { id: postId }, include: { approvedCreativeBrief: { select: { id: true, postVersionId: true, reviewStatus: true, mediaUrl: true } } } });
   if (!post) return { published: false, reason: "post-not-found" };
   if (post.publishedAt !== null || post.status === PostStatus.PUBLISHED) {
     console.info("[linkedin] duplicate publication prevented after claim", { postId });
     return { published: false, reason: "already-published" };
+  }
+  const eligibility = getPublicationEligibility(post);
+  if (!eligibility.eligible) {
+    await prisma.post.updateMany({ where: { id: post.id, status: PostStatus.PUBLISHING }, data: { status: PostStatus.DRAFT } });
+    console.warn("[linkedin] publication blocked by quality gate", { postId, reasons: eligibility.reasons });
+    return { published: false, reason: `not-eligible:${eligibility.reasons.join(",")}` };
   }
 
   try {

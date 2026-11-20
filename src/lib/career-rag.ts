@@ -38,23 +38,17 @@ export function calculateMatch(input: {
   jobDescription: string;
 }): { score: number; label: string; matchedSkills: string[]; skillGaps: string[]; rationale: string } {
   const jobText = `${input.jobTitle} ${input.jobDescription}`;
-  const jobTokens = new Set(tokenize(jobText));
   const canonicalProfileSkills = normalizeSkills(input.profileSkills);
   const canonicalJobSkills = extractSkillsFromText(jobText);
-  const canonicalMatches = canonicalProfileSkills.filter((skill) => canonicalJobSkills.includes(skill));
-  const skills = canonicalProfileSkills.flatMap(tokenize);
-  const uniqueSkills = [...new Set(skills)];
-  const tokenMatches = uniqueSkills.filter((skill) => jobTokens.has(skill));
-  const matchedSkills = [...new Set([...canonicalMatches, ...tokenMatches])];
-  const canonicalGaps = canonicalJobSkills.filter((skill) => !canonicalProfileSkills.includes(skill));
-  const tokenGaps = tokenize(input.jobTitle).filter((token) => !uniqueSkills.includes(token) && jobTokens.has(token));
-  const skillGaps = [...new Set([...canonicalGaps, ...tokenGaps])].slice(0, 8);
-  const titleTokens = tokenize(input.jobTitle);
-  const titleMatch = titleTokens.length === 0 ? 0 : titleTokens.filter((token) => uniqueSkills.includes(token)).length / titleTokens.length;
-  const comparableSkillCount = canonicalJobSkills.length > 0 ? canonicalProfileSkills.length : uniqueSkills.length;
-  const comparableMatches = canonicalJobSkills.length > 0 ? canonicalMatches.length : tokenMatches.length;
-  const skillMatch = comparableSkillCount === 0 ? 0 : comparableMatches / Math.min(comparableSkillCount, 12);
-  const contextBoost = tokenize(input.profileContext).some((token) => jobTokens.has(token)) ? 0.08 : 0;
+  const profileSkillSet = new Set(canonicalProfileSkills);
+  const canonicalMatches = canonicalJobSkills.filter((skill) => profileSkillSet.has(skill));
+  const matchedSkills = [...new Set(canonicalMatches)];
+  const skillGaps = [...new Set(canonicalJobSkills.filter((skill) => !profileSkillSet.has(skill)))].slice(0, 8);
+  const titleSkills = extractSkillsFromText(input.jobTitle);
+  const titleMatch = titleSkills.length === 0 ? 0 : titleSkills.filter((skill) => profileSkillSet.has(skill)).length / titleSkills.length;
+  const skillMatch = canonicalJobSkills.length === 0 ? 0 : canonicalMatches.length / Math.min(canonicalJobSkills.length, 12);
+  const contextSkills = extractSkillsFromText(input.profileContext);
+  const contextBoost = canonicalJobSkills.some((skill) => contextSkills.includes(skill)) ? 0.08 : 0;
   const score = Math.round(Math.min(100, (skillMatch * 62) + (titleMatch * 30) + (contextBoost * 100)));
   const label = score >= 75 ? "Alto match" : score >= 50 ? "Match moderado" : "Baixo match";
   const rationale = matchedSkills.length > 0
