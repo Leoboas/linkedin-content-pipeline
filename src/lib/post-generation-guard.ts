@@ -3,6 +3,74 @@ export function weeklyGenerationKeys(weekKey: string, count: number): string[] {
   return Array.from({ length: boundedCount }, (_, index) => `weekly:${weekKey}:slot:${index}`);
 }
 
+export interface WeeklyGenerationRecord {
+  generationKey: string | null;
+  status: string;
+  qualityStatus: string | null;
+}
+
+export interface WeeklyGenerationSlot {
+  slotIndex: number;
+  generationKey: string;
+}
+
+const terminalWithoutPublication = new Set([
+  "ARCHIVED",
+  "CANCELLED",
+  "REJECTED",
+  "REJECTED_PENDING_FEEDBACK",
+]);
+const approvedOrPublished = new Set([
+  "AWAITING_APPROVAL",
+  "APPROVED",
+  "PUBLISHING",
+  "PUBLISHED",
+  "REGENERATING",
+  "SCHEDULED",
+]);
+
+function occupiesWeeklySlot(record: WeeklyGenerationRecord): boolean {
+  if (terminalWithoutPublication.has(record.status)) return false;
+  if (approvedOrPublished.has(record.status)) return true;
+  if (record.status === "DRAFT" && ["NEEDS_REVISION", "BLOCKED"].includes(record.qualityStatus ?? "")) return false;
+  // A draft with no failed quality verdict, or an unknown workflow state,
+  // remains a claimed slot to avoid duplicate generation.
+  return true;
+}
+
+/**
+ * Finds slots that can be generated without overwriting historical posts.
+ * A failed/archived attempt gets a new immutable generation key, bounded to
+ * three total attempts per slot (the original plus two retries).
+ */
+export function getAvailableWeeklySlots(
+  weekKey: string,
+  count: number,
+  records: WeeklyGenerationRecord[],
+  maxAttempts = 3,
+): WeeklyGenerationSlot[] {
+  const baseKeys = weeklyGenerationKeys(weekKey, count);
+  return baseKeys.flatMap((baseKey, slotIndex) => {
+    const related = records.filter((record) =>
+      record.generationKey === baseKey || record.generationKey?.startsWith(`${baseKey}:revision:`),
+    );
+    if (related.some(occupiesWeeklySlot)) return [];
+
+    const revisions = related.flatMap((record) => {
+      if (record.generationKey === baseKey) return [1];
+      const match = record.generationKey?.match(/:revision:(\d+)$/u);
+      return match ? [Number(match[1])] : [];
+    });
+    const nextAttempt = revisions.length === 0 ? 1 : Math.max(...revisions) + 1;
+    if (nextAttempt > maxAttempts) return [];
+
+    return [{
+      slotIndex,
+      generationKey: nextAttempt === 1 ? baseKey : `${baseKey}:revision:${nextAttempt}`,
+    }];
+  });
+}
+
 function normalizeTitle(title: string): string {
   return title.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLocaleLowerCase("pt-BR").replace(/[^a-z0-9]+/g, " ").trim();
 }

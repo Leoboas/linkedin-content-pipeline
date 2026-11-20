@@ -5,7 +5,7 @@ import { parseDateTimeLocalInBrazil } from "@/lib/dates";
 import { getNextPipelineBaseDate } from "@/lib/scheduling";
 import { prisma } from "@/lib/prisma";
 import { PostStatus } from "@prisma/client";
-import { weeklyGenerationKeys } from "@/lib/post-generation-guard";
+import { getAvailableWeeklySlots } from "@/lib/post-generation-guard";
 
 export async function POST(request: Request): Promise<NextResponse> {
   if (!isDashboardAuthorized(request)) return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
@@ -25,9 +25,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     const editorialLine = await prisma.editorialLine.findFirst({ orderBy: { createdAt: "asc" }, select: { postsPerWeek: true } });
     if (!editorialLine) return NextResponse.json({ error: "Configure uma linha editorial antes de gerar o calendário." }, { status: 409 });
     const weekKey = baseDate.toISOString().slice(0, 10);
-    const keys = weeklyGenerationKeys(weekKey, editorialLine.postsPerWeek);
-    const existing = await prisma.post.count({ where: { generationKey: { in: keys } } });
-    if (existing >= keys.length) return NextResponse.json({ error: `O calendário da semana de ${weekKey} já possui os ${keys.length} slots. Nenhum post antigo será reenviado.` }, { status: 409 });
+    const existingSlots = await prisma.post.findMany({
+      where: { generationKey: { startsWith: `weekly:${weekKey}:slot:` } },
+      select: { generationKey: true, status: true, qualityStatus: true },
+    });
+    const availableSlots = getAvailableWeeklySlots(weekKey, editorialLine.postsPerWeek, existingSlots);
+    if (availableSlots.length === 0) {
+      return NextResponse.json({ error: `Todos os slots da semana de ${weekKey} já têm um post ativo ou atingiram o limite de tentativas. Posts antigos foram preservados.` }, { status: 409 });
+    }
     const awaitingApproval = await prisma.post.count({ where: { status: PostStatus.AWAITING_APPROVAL } });
     if (awaitingApproval >= 3) return NextResponse.json({ error: "A fila já tem 3 posts aguardando aprovação. Aprove, recuse ou arquive antes de gerar outro lote." }, { status: 409 });
     await inngest.send({ name: "posts/generate.weekly", data: { triggeredAt: new Date().toISOString(), ...(weekStart ? { weekStart } : {}) } });

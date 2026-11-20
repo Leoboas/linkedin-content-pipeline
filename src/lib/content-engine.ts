@@ -13,7 +13,7 @@ import { getProfessionalEvidenceDetails, getVisualProjectEvidenceDetails } from 
 import { buildContentBrief } from "@/lib/creative-brief";
 import { toVisualBrief } from "@/lib/creative-brief";
 import { createPostTextVersion } from "@/lib/post-versioning";
-import { hasDuplicatePostTitle, weeklyGenerationKeys } from "@/lib/post-generation-guard";
+import { getAvailableWeeklySlots, hasDuplicatePostTitle } from "@/lib/post-generation-guard";
 import { planLanguages, type ContentLanguage } from "@/lib/language-planner";
 import { getNextPipelineBaseDate, pillarOrder, rollingScheduledDateForPost, scheduledDateForPost } from "@/lib/scheduling";
 import { contentFrameworkPrompt } from "../../config/content-skills";
@@ -279,17 +279,19 @@ export async function generateNewPostBatch(options: BatchOptions = {}): Promise<
   const ragContext = await buildRagContext(editorialLine.id);
   const configuredCount = Math.max(1, Math.min(4, editorialLine.postsPerWeek));
   const fullLanguagePlan = planLanguages(configuredCount, editorialLine.languageDistribution);
-  const generationKeys = weeklyGenerationKeys(weekKey, configuredCount);
-  const existingSlots = await prisma.post.findMany({ where: { generationKey: { in: generationKeys } }, select: { generationKey: true } });
-  const existingKeys = new Set(existingSlots.flatMap((post) => post.generationKey ? [post.generationKey] : []));
-  const missingSlots = generationKeys.flatMap((key, index) => existingKeys.has(key) ? [] : [index]);
-  if (missingSlots.length === 0) {
-    console.info("[content-engine] target week already generated; no existing posts will be resent", { weekKey });
+  const generationPrefix = `weekly:${weekKey}:slot:`;
+  const existingSlots = await prisma.post.findMany({
+    where: { generationKey: { startsWith: generationPrefix } },
+    select: { generationKey: true, status: true, qualityStatus: true },
+  });
+  const availableGenerationSlots = getAvailableWeeklySlots(weekKey, configuredCount, existingSlots);
+  if (availableGenerationSlots.length === 0) {
+    console.info("[content-engine] no retryable weekly slots remain; existing posts were preserved", { weekKey });
     return [];
   }
-  const targetSlots = missingSlots.slice(0, availableSlots);
+  const targetSlots = availableGenerationSlots.slice(0, availableSlots);
   if (targetSlots.length === 0) return [];
-  const languagePlan = targetSlots.map((slot) => fullLanguagePlan[slot] ?? "pt-BR");
+  const languagePlan = targetSlots.map((slot) => fullLanguagePlan[slot.slotIndex] ?? "pt-BR");
   const previousPosts = await prisma.post.findMany({
     where: { OR: [{ createdAt: { gte: new Date(referenceDate.getTime() - 365 * 24 * 60 * 60 * 1000) } }, { status: PostStatus.PUBLISHED }] },
     select: { title: true }, take: 500, orderBy: { createdAt: "desc" },
@@ -345,11 +347,11 @@ export async function generateNewPostBatch(options: BatchOptions = {}): Promise<
   }
 
   for (const [index, post] of orderedGenerated.entries()) {
-    // A chave representa o slot editorial, não a tentativa de execução.
-    // Repetir cron, Inngest ou comando manual deve reencontrar o mesmo post.
-    const slotIndex = targetSlots[index];
-    if (slotIndex === undefined) continue;
-    const generationKey = `weekly:${weekKey}:slot:${slotIndex}`;
+    // A chave identifica a tentativa imutável do slot; concorrência reutiliza
+    // a mesma chave, enquanto uma revisão reprovada recebe uma chave :revision:N.
+    const targetSlot = targetSlots[index];
+    if (!targetSlot) continue;
+    const { slotIndex, generationKey } = targetSlot;
     const existing = await prisma.post.findUnique({ where: { generationKey } });
     if (existing) {
       console.info("[content-engine] slot was generated concurrently; skipping existing post", { generationKey });
