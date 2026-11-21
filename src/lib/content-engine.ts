@@ -14,8 +14,10 @@ import { buildContentBrief } from "@/lib/creative-brief";
 import { toVisualBrief } from "@/lib/creative-brief";
 import { createPostTextVersion } from "@/lib/post-versioning";
 import { getAvailableWeeklySlots, hasDuplicatePostTitle } from "@/lib/post-generation-guard";
-import { planLanguages, type ContentLanguage } from "@/lib/language-planner";
-import { getNextPipelineBaseDate, pillarOrder, rollingScheduledDateForPost, scheduledDateForPost } from "@/lib/scheduling";
+import type { ContentLanguage } from "@/lib/language-planner";
+import { normalizeWeeklySchedule } from "@/lib/editorial-calendar";
+import { classifyEditorialTheme, evaluateHookQuality, scoreCareerRelevance, selectEditorialFormat } from "@/lib/editorial-intelligence";
+import { getNextPipelineBaseDate, rollingScheduledDateForPost, scheduledDateForPost } from "@/lib/scheduling";
 import { contentFrameworkPrompt } from "../../config/content-skills";
 import { positioningPrompt } from "../../config/linkedin-positioning";
 import { CREATIVE_DIRECTION_PROMPT, visualFormatForPost } from "../../config/creative-direction";
@@ -78,7 +80,7 @@ async function persistCreativeBrief(input: { postId: string; postVersionId?: str
       const item = value as Record<string, unknown>;
       if (typeof item.kind !== "string" || typeof item.claim !== "string" || typeof item.verified !== "boolean") return [];
       if (!["PROFESSIONAL_EXPERIENCE", "PORTFOLIO_PROJECT", "CONCEPTUAL_KNOWLEDGE", "PLANNED_FEATURE"].includes(item.kind)) return [];
-      return [{ id: typeof item.id === "string" ? item.id : undefined, source: typeof item.source === "string" ? item.source : undefined, kind: item.kind as "PROFESSIONAL_EXPERIENCE" | "PORTFOLIO_PROJECT" | "CONCEPTUAL_KNOWLEDGE" | "PLANNED_FEATURE", claim: item.claim, verified: item.verified }];
+      return [{ id: typeof item.id === "string" ? item.id : undefined, source: typeof item.source === "string" ? item.source : undefined, kind: item.kind as "PROFESSIONAL_EXPERIENCE" | "PORTFOLIO_PROJECT" | "CONCEPTUAL_KNOWLEDGE" | "PLANNED_FEATURE", claim: item.claim, verified: item.verified, ...(typeof item.claimClassification === "string" ? { claimClassification: item.claimClassification as import("@/lib/creative-brief").ClaimClassification } : {}) }];
     });
     const effectiveBrief = input.brief.evidence.length > 0 || preservedEvidence.length === 0
       ? input.brief
@@ -172,8 +174,8 @@ async function persistCreativeBrief(input: { postId: string; postVersionId?: str
   }
 }
 
-export async function recordRenderedCreativeVersion(input: { postId: string; title: string; textContent: string; editorialPillar: string; slides?: GeneratedSlide[]; prompt: string; mediaUrl: string; review: Record<string, unknown> }): Promise<void> {
-  const brief = buildContentBrief({ title: input.title, textContent: input.textContent, editorialPillar: input.editorialPillar, visualBullets: input.slides?.[0]?.bullets });
+export async function recordRenderedCreativeVersion(input: { postId: string; title: string; textContent: string; editorialPillar: string; slides?: GeneratedSlide[]; prompt: string; mediaUrl: string; review: Record<string, unknown>; visualFormat?: import("../../config/creative-direction").VisualFormat }): Promise<void> {
+  const brief = buildContentBrief({ title: input.title, textContent: input.textContent, editorialPillar: input.editorialPillar, visualBullets: input.slides?.[0]?.bullets, visualFormat: input.visualFormat });
   await persistCreativeBrief({ postId: input.postId, brief, prompt: input.prompt, mediaUrl: input.mediaUrl, review: { ...input.review, renderedImage: input.review } });
 }
 
@@ -277,8 +279,8 @@ export async function generateNewPostBatch(options: BatchOptions = {}): Promise<
   const baseDate = requestedWeek ?? getNextPipelineBaseDate(referenceDate);
   const weekKey = baseDate.toISOString().slice(0, 10);
   const ragContext = await buildRagContext(editorialLine.id);
-  const configuredCount = Math.max(1, Math.min(4, editorialLine.postsPerWeek));
-  const fullLanguagePlan = planLanguages(configuredCount, editorialLine.languageDistribution);
+  const weeklySchedule = normalizeWeeklySchedule(editorialLine.weeklySchedule);
+  const configuredCount = 4;
   const generationPrefix = `weekly:${weekKey}:slot:`;
   const existingSlots = await prisma.post.findMany({
     where: { generationKey: { startsWith: generationPrefix } },
@@ -291,7 +293,7 @@ export async function generateNewPostBatch(options: BatchOptions = {}): Promise<
   }
   const targetSlots = availableGenerationSlots.slice(0, availableSlots);
   if (targetSlots.length === 0) return [];
-  const languagePlan = targetSlots.map((slot) => fullLanguagePlan[slot.slotIndex] ?? "pt-BR");
+  const languagePlan = targetSlots.map((slot) => weeklySchedule[slot.slotIndex]?.language ?? "pt-BR");
   const previousPosts = await prisma.post.findMany({
     where: { OR: [{ createdAt: { gte: new Date(referenceDate.getTime() - 365 * 24 * 60 * 60 * 1000) } }, { status: PostStatus.PUBLISHED }] },
     select: { title: true }, take: 500, orderBy: { createdAt: "desc" },
@@ -334,17 +336,9 @@ export async function generateNewPostBatch(options: BatchOptions = {}): Promise<
   }
 
   const ids: string[] = [];
-  const sortedGenerated = [...generated].sort((left, right) => pillarOrder(left.editorialPillar) - pillarOrder(right.editorialPillar));
-  const orderedGenerated: GeneratedPost[] = [];
-  const used = new Set<GeneratedPost>();
-  for (const pillar of ["TOFU", "MOFU", "BOFU"] as const) {
-    const post = sortedGenerated.find((candidate) => candidate.editorialPillar === pillar && !used.has(candidate));
-    if (post) { orderedGenerated.push(post); used.add(post); }
-  }
-  for (const post of sortedGenerated) {
-    if (orderedGenerated.length >= 4) break;
-    if (!used.has(post)) { orderedGenerated.push(post); used.add(post); }
-  }
+  // Keep the generated sequence aligned with immutable calendar slots; sorting
+  // by funnel used to silently swap the intended PT/EN days.
+  const orderedGenerated = generated;
 
   for (const [index, post] of orderedGenerated.entries()) {
     // A chave identifica a tentativa imutável do slot; concorrência reutiliza
@@ -352,6 +346,8 @@ export async function generateNewPostBatch(options: BatchOptions = {}): Promise<
     const targetSlot = targetSlots[index];
     if (!targetSlot) continue;
     const { slotIndex, generationKey } = targetSlot;
+    const slotConfig = weeklySchedule[slotIndex];
+    if (!slotConfig) throw new Error(`Slot editorial ${slotIndex} sem configuração.`);
     const existing = await prisma.post.findUnique({ where: { generationKey } });
     if (existing) {
       console.info("[content-engine] slot was generated concurrently; skipping existing post", { generationKey });
@@ -362,6 +358,14 @@ export async function generateNewPostBatch(options: BatchOptions = {}): Promise<
       continue;
     }
 
+    const formatDecision = selectEditorialFormat({
+      requestedFormat: post.formatType,
+      title: post.title,
+      textContent: post.textContent,
+      slides: post.slides,
+    });
+    const scheduledPost = { ...post, formatType: formatDecision.formatType };
+    const theme = classifyEditorialTheme(post.title, post.textContent);
     const prediction = predictEngagement({
       title: post.title,
       textContent: post.textContent,
@@ -374,7 +378,9 @@ export async function generateNewPostBatch(options: BatchOptions = {}): Promise<
     const professionalEvidenceDetails = await getProfessionalEvidenceDetails(evidenceTopic);
     const allEvidenceDetails = [...professionalEvidenceDetails, ...projectEvidenceDetails];
     const projectEvidence = projectEvidenceDetails.map((item) => `${item.claim}${item.source ? ` Fonte: ${item.source}` : ""}`).join("\n");
-    const contentBrief = buildContentBrief({ title: post.title, textContent: post.textContent, editorialPillar: post.editorialPillar, visualBullets: post.slides[0]?.bullets, evidence: allEvidenceDetails });
+    const evidenceAwareCareerRelevance = scoreCareerRelevance({ title: post.title, textContent: post.textContent, evidence: allEvidenceDetails });
+    const evidenceAwareHookQuality = evaluateHookQuality({ title: post.title, textContent: post.textContent, evidence: allEvidenceDetails, recentTitles: excludedTitles });
+    const contentBrief = buildContentBrief({ title: post.title, textContent: post.textContent, editorialPillar: post.editorialPillar, visualBullets: post.slides[0]?.bullets, evidence: allEvidenceDetails, visualFormat: formatDecision.visualFormat });
     const imagePrompt = buildImagePrompt({
       title: post.title,
       textContent: post.textContent,
@@ -382,7 +388,7 @@ export async function generateNewPostBatch(options: BatchOptions = {}): Promise<
       visualBullets: post.slides[0]?.bullets,
       negativeFeedback: ragContext.negativeFeedback,
       referenceInsights: ragContext.references,
-      visualFormat: visualFormatForPost(post.formatType, post.editorialPillar),
+      visualFormat: formatDecision.visualFormat,
       projectEvidence,
       contentBrief,
     });
@@ -392,6 +398,7 @@ export async function generateNewPostBatch(options: BatchOptions = {}): Promise<
       editorialPillar: post.editorialPillar,
       slides: post.slides,
       imagePrompt,
+      contentBrief,
     });
     const claimValidation = await validateContentClaims({ title: post.title, textContent: post.textContent, editorialLineId: editorialLine.id });
     const finalQualityReview = {
@@ -403,10 +410,10 @@ export async function generateNewPostBatch(options: BatchOptions = {}): Promise<
       claims: claimValidation,
     };
     const scheduledDate = options.weekStart
-      ? scheduledDateForPost(slotIndex, post.editorialPillar, baseDate)
+      ? scheduledDateForPost(slotIndex, post.editorialPillar, baseDate, weeklySchedule)
       : options.startDate
       ? rollingScheduledDateForPost(slotIndex, post.editorialPillar, options.startDate)
-      : scheduledDateForPost(slotIndex, post.editorialPillar, baseDate);
+      : scheduledDateForPost(slotIndex, post.editorialPillar, baseDate, weeklySchedule);
     let saved: Awaited<ReturnType<typeof prisma.post.create>>;
     try {
       saved = await prisma.post.create({
@@ -415,11 +422,11 @@ export async function generateNewPostBatch(options: BatchOptions = {}): Promise<
         editorialLineId: editorialLine.id,
         editorialPillar: post.editorialPillar,
         funnelStage: post.funnelStage,
-        formatType: post.formatType as FormatType,
-        language: post.language ?? languagePlan[index] ?? "pt-BR",
-        editorialObjective: `Slot ${slotIndex + 1} do calendário: ${post.editorialPillar} com foco em autoridade técnica e carreira.`,
+        formatType: scheduledPost.formatType as FormatType,
+        language: slotConfig.language,
+        editorialObjective: slotConfig.objective,
         associatedProject: projectEvidenceDetails[0]?.claim.split(":")[0] ?? null,
-        topic: post.title,
+        topic: theme,
         title: post.title,
         textContent: post.textContent,
         imagePrompt,
@@ -429,7 +436,15 @@ export async function generateNewPostBatch(options: BatchOptions = {}): Promise<
         status: !usedDeterministicFallback && finalQualityReview.status === QualityGateStatus.PASS && ids.length < availableSlots ? PostStatus.AWAITING_APPROVAL : PostStatus.DRAFT,
         qualityScore: usedDeterministicFallback ? 0 : Math.min(finalQualityReview.score, claimValidation.score),
         qualityStatus: usedDeterministicFallback ? QualityGateStatus.NEEDS_REVISION : finalQualityReview.status,
-        qualityReview: qualityReviewJson(finalQualityReview),
+        qualityReview: qualityReviewJson({ ...finalQualityReview, editorialIntelligence: {
+          theme,
+          objective: slotConfig.objective,
+          formatReason: formatDecision.reason,
+          visualFormat: formatDecision.visualFormat,
+          careerRelevance: evidenceAwareCareerRelevance,
+          hookQuality: evidenceAwareHookQuality,
+          claimClasses: allEvidenceDetails.map((item) => ({ id: item.id ?? null, source: item.source ?? null, kind: item.kind, classification: item.claimClassification ?? "UNCLASSIFIED", claim: item.claim })),
+        } }),
         qualityReviewedAt: new Date(),
         scheduledFor: scheduledDate,
         scheduledDate,
@@ -445,7 +460,7 @@ export async function generateNewPostBatch(options: BatchOptions = {}): Promise<
     const versionId = await prisma.$transaction(async (tx) => {
       const id = await createPostTextVersion(tx, {
         postId: saved.id,
-        snapshot: { title: post.title, textContent: post.textContent, slidesJson: post.slides as unknown as Prisma.InputJsonValue, imagePrompt, language: post.language ?? languagePlan[index] ?? "pt-BR" },
+        snapshot: { title: post.title, textContent: post.textContent, slidesJson: post.slides as unknown as Prisma.InputJsonValue, imagePrompt, language: slotConfig.language },
         reason: "initial-generation",
       });
       const projectIds = projectEvidenceDetails.map((evidence) => evidence.id).filter((projectId): projectId is string => Boolean(projectId));
@@ -454,7 +469,7 @@ export async function generateNewPostBatch(options: BatchOptions = {}): Promise<
       }
       return id;
     });
-    await persistCreativeBrief({ postId: saved.id, postVersionId: versionId, language: post.language ?? languagePlan[index] ?? "pt-BR", brief: contentBrief, prompt: imagePrompt });
+    await persistCreativeBrief({ postId: saved.id, postVersionId: versionId, language: slotConfig.language, brief: contentBrief, prompt: imagePrompt });
     ids.push(saved.id);
   }
   return ids;
@@ -509,7 +524,8 @@ export async function refactorPostWithFeedback(
   const regeneratedProjectEvidence = await getVisualProjectEvidenceDetails(evidenceTopic);
   const regeneratedProfessionalEvidence = await getProfessionalEvidenceDetails(evidenceTopic);
   const regeneratedEvidence = [...regeneratedProfessionalEvidence, ...regeneratedProjectEvidence];
-  const contentBrief = buildContentBrief({ title: regenerated.title, textContent: regenerated.textContent, editorialPillar: regenerated.editorialPillar, visualBullets: regenerated.slides[0]?.bullets, evidence: regeneratedEvidence });
+  const formatDecision = selectEditorialFormat({ requestedFormat: regenerated.formatType, title: regenerated.title, textContent: regenerated.textContent, slides: regenerated.slides });
+  const contentBrief = buildContentBrief({ title: regenerated.title, textContent: regenerated.textContent, editorialPillar: regenerated.editorialPillar, visualBullets: regenerated.slides[0]?.bullets, evidence: regeneratedEvidence, visualFormat: formatDecision.visualFormat });
   const refinedImagePrompt = buildImagePrompt({
     title: regenerated.title,
     textContent: regenerated.textContent,
@@ -517,25 +533,28 @@ export async function refactorPostWithFeedback(
     visualBullets: regenerated.slides[0]?.bullets,
     feedback,
     negativeFeedback: ragContext.negativeFeedback,
+    visualFormat: formatDecision.visualFormat,
     contentBrief,
   });
-  let mediaUrl: string;
-  try {
-    mediaUrl = await generateImageWithFallback({
-      postId,
-      title: regenerated.title,
-      editorialPillar: regenerated.editorialPillar,
-      imagePrompt: refinedImagePrompt,
-      visualFormat: visualFormatForPost(FormatType.SINGLE_IMAGE, regenerated.editorialPillar),
-      contentBrief,
-      overlayTitle: contentBrief.shortOverlayTitle,
-    });
-  } catch (error) {
-    console.error("[content-engine] image refactor failed", {
-      postId,
-      error: error instanceof Error ? error.message : String(error),
-    });
-    throw error;
+  let mediaUrl: string | null = null;
+  if (formatDecision.formatType !== FormatType.TEXT_ONLY) {
+    try {
+      mediaUrl = await generateImageWithFallback({
+        postId,
+        title: regenerated.title,
+        editorialPillar: regenerated.editorialPillar,
+        imagePrompt: refinedImagePrompt,
+        visualFormat: formatDecision.visualFormat,
+        contentBrief,
+        overlayTitle: contentBrief.shortOverlayTitle,
+      });
+    } catch (error) {
+      console.error("[content-engine] image refactor failed", {
+        postId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
+    }
   }
   const qualityReview = await reviewPostQuality({
     title: regenerated.title,
@@ -544,9 +563,10 @@ export async function refactorPostWithFeedback(
     slides: regenerated.slides,
     imagePrompt: refinedImagePrompt,
     mediaUrl,
+    contentBrief,
   });
-  const renderedImageReview = await reviewRenderedImage({ mediaUrl, title: regenerated.title, editorialPillar: regenerated.editorialPillar, brief: contentBrief });
-  const visualReviewPassed = Boolean(renderedImageReview && renderedImageReview.score >= 72 && renderedImageReview.textLegible);
+  const renderedImageReview = mediaUrl ? await reviewRenderedImage({ mediaUrl, title: regenerated.title, editorialPillar: regenerated.editorialPillar, brief: contentBrief }) : null;
+  const visualReviewPassed = formatDecision.formatType === FormatType.TEXT_ONLY || Boolean(renderedImageReview && renderedImageReview.score >= 72 && renderedImageReview.textLegible);
   const claimValidation = await validateContentClaims({ title: regenerated.title, textContent: regenerated.textContent, editorialLineId: current.editorialLineId ?? undefined });
   const finalQualityReview = {
     ...qualityReview,
@@ -555,7 +575,18 @@ export async function refactorPostWithFeedback(
     recommendations: [...qualityReview.recommendations, ...(claimValidation.blocked ? ["Remova ou comprove as métricas e resultados destacados antes da aprovação."] : [])],
     summary: claimValidation.blocked ? "Reformulação retida: há afirmações quantitativas sem evidência." : qualityReview.summary,
     claims: claimValidation,
-    renderedImage: renderedImageReview
+    editorialIntelligence: {
+      theme: classifyEditorialTheme(regenerated.title, regenerated.textContent),
+      objective: current.editorialObjective ?? "Authority",
+      formatReason: formatDecision.reason,
+      visualFormat: formatDecision.visualFormat,
+      careerRelevance: scoreCareerRelevance({ title: regenerated.title, textContent: regenerated.textContent, evidence: regeneratedEvidence }),
+      hookQuality: evaluateHookQuality({ title: regenerated.title, textContent: regenerated.textContent, evidence: regeneratedEvidence }),
+      claimClasses: regeneratedEvidence.map((item) => ({ id: item.id ?? null, source: item.source ?? null, kind: item.kind, classification: item.claimClassification ?? "UNCLASSIFIED", claim: item.claim })),
+    },
+    renderedImage: formatDecision.formatType === FormatType.TEXT_ONLY
+      ? { status: "NOT_REQUIRED", reviewedMediaUrl: null, reason: "text-first publication format" }
+      : renderedImageReview
       ? { ...renderedImageReview, status: visualReviewPassed ? "PASS" : "NEEDS_REVISION", reviewedMediaUrl: mediaUrl }
       : { status: "PENDING_HUMAN_REVIEW", reviewedMediaUrl: null, reason: "multimodal image inspection unavailable" },
   };
@@ -577,9 +608,10 @@ export async function refactorPostWithFeedback(
       data: {
       title: regenerated.title,
       textContent: regenerated.textContent,
+      topic: classifyEditorialTheme(regenerated.title, regenerated.textContent),
       editorialPillar: regenerated.editorialPillar,
       funnelStage: regenerated.funnelStage,
-      formatType: FormatType.SINGLE_IMAGE,
+      formatType: formatDecision.formatType,
         imagePrompt: refinedImagePrompt,
       currentVersionId: versionId,
       approvedCreativeBriefId: null,
@@ -589,7 +621,7 @@ export async function refactorPostWithFeedback(
       engagementLabel: prediction.label,
       feedbackText: feedback,
       status: PostStatus.DRAFT,
-      qualityScore: Math.min(finalQualityReview.score, claimValidation.score, renderedImageReview?.score ?? 0),
+      qualityScore: Math.min(finalQualityReview.score, claimValidation.score, formatDecision.formatType === FormatType.TEXT_ONLY ? 100 : renderedImageReview?.score ?? 0),
       qualityStatus: finalQualityReview.status,
       qualityReview: qualityReviewJson(finalQualityReview),
       qualityReviewedAt: new Date(),

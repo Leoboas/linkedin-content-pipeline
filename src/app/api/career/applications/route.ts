@@ -8,13 +8,13 @@ export async function GET(request: Request): Promise<NextResponse> {
   const profile = await getOrCreateProfile();
   const applications = await prisma.jobApplication.findMany({
     where: { profileId: profile.id },
-    include: { job: { include: { matches: { where: { profileId: profile.id }, take: 1 } } }, resumeDraft: { select: { id: true, targetRole: true, atsScore: true, status: true } } },
+    include: { job: { include: { matches: { where: { profileId: profile.id }, take: 1, include: { recommendedResume: { select: { id: true, originalName: true, version: true, sha256: true } } } } } }, resumeDraft: { select: { id: true, targetRole: true, atsScore: true, status: true } }, authorizedResume: { select: { id: true, originalName: true, version: true, language: true, sha256: true } } },
     orderBy: { updatedAt: "desc" },
   });
   return NextResponse.json({ applications: applications.map(({ job, ...application }) => {
     const latestMatch = job.matches[0];
     const { matches: _matches, ...jobData } = job;
-    return { ...application, job: { ...jobData, score: latestMatch?.score ?? 0, label: latestMatch?.label ?? "Sem match", rationale: latestMatch?.rationale ?? "" } };
+    return { ...application, job: { ...jobData, score: latestMatch?.score ?? 0, label: latestMatch?.label ?? "Sem match", rationale: latestMatch?.rationale ?? "", eligibilityStatus: latestMatch?.eligibilityStatus ?? "UNKNOWN", eligibilityReasons: latestMatch?.eligibilityReasons ?? [], recommendedResume: latestMatch?.recommendedResume ?? null, recommendedResumeReason: latestMatch?.recommendedResumeReason ?? null } };
   }) });
 }
 
@@ -27,9 +27,10 @@ export async function POST(request: Request): Promise<NextResponse> {
   const profile = await getOrCreateProfile();
   const job = await prisma.jobListing.findUnique({ where: { id: body.jobId }, select: { id: true } });
   if (!job) return NextResponse.json({ error: "Vaga não encontrada." }, { status: 404 });
+  const match = await prisma.jobMatch.findUnique({ where: { profileId_jobId: { profileId: profile.id, jobId: job.id } }, select: { recommendedResumeId: true } });
   const application = await prisma.jobApplication.upsert({
     where: { profileId_jobId: { profileId: profile.id, jobId: job.id } },
-    create: { profileId: profile.id, jobId: job.id, status: "SAVED" },
+    create: { profileId: profile.id, jobId: job.id, status: "SAVED", authorizedResumeId: match?.recommendedResumeId ?? null },
     update: {},
     include: { job: true },
   });

@@ -1,13 +1,18 @@
 import { inngest } from "@/inngest/client";
 import { runCareerScan } from "@/lib/career-engine";
-import { sendCareerDigest } from "@/lib/telegram";
 
 export const careerSearchPipeline = inngest.createFunction(
   { id: "career-daily-job-hunter", retries: 2 },
   { event: "career/scan.requested" },
-  async ({ step }) => {
-    const result = await step.run("search-match-and-audit", () => runCareerScan());
-    await step.run("notify-career-matches", () => sendCareerDigest(result));
-    return { runId: result.runId, discovered: result.discovered, matches: result.matches.length };
+  async ({ event, step }) => {
+    const data = event.data as { runId?: string };
+    try {
+      const result = await step.run("search-match-and-audit", () => runCareerScan(data.runId));
+      console.info("[career/inngest] execução concluída", { runId: result.runId, discovered: result.discovered, matches: result.matches.length, sourceRequests: result.queries });
+      return { runId: result.runId, discovered: result.discovered, matches: result.matches.length };
+    } catch (error) {
+      console.error("[career/inngest] execução falhou", { runId: data.runId, error: error instanceof Error ? error.message : "Erro desconhecido" });
+      throw error;
+    }
   },
 );

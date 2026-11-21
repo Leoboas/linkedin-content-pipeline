@@ -115,7 +115,7 @@ export async function reviewPostQuality(post: ReviewablePost): Promise<PostQuali
   }
 }
 
-export function qualityReviewJson(review: PostQualityReview): Prisma.InputJsonValue {
+export function qualityReviewJson(review: object): Prisma.InputJsonValue {
   return review as unknown as Prisma.InputJsonValue;
 }
 

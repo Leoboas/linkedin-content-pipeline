@@ -1,6 +1,8 @@
 import type { EditorialPillar } from "@prisma/client";
+import type { VisualFormat } from "../../config/creative-direction";
 
 export type EvidenceKind = "PROFESSIONAL_EXPERIENCE" | "PORTFOLIO_PROJECT" | "CONCEPTUAL_KNOWLEDGE" | "PLANNED_FEATURE";
+export type ClaimClassification = "IMPLEMENTATION_DEMONSTRATED" | "INFRASTRUCTURE_DEFINED_NOT_DEPLOYED" | "VERIFIED_PROFESSIONAL_EXPERIENCE" | "CONCEPTUAL_EXPLANATION" | "EXTERNAL_REFERENCE";
 
 export interface CreativeEvidence {
   id?: string;
@@ -8,6 +10,7 @@ export interface CreativeEvidence {
   kind: EvidenceKind;
   claim: string;
   verified: boolean;
+  claimClassification?: ClaimClassification;
 }
 
 export interface ContentBrief {
@@ -18,6 +21,7 @@ export interface ContentBrief {
   visualConcept: string;
   shortOverlayTitle: string;
   editorialPillar: EditorialPillar | string;
+  visualFormat: VisualFormat;
 }
 
 export interface VisualBrief {
@@ -28,6 +32,7 @@ export interface VisualBrief {
   visualAnchors: string[];
   audience: string;
   negativePrompt: string;
+  format: VisualFormat;
 }
 
 const forbiddenOverlay = /[^\p{L}\p{N}\s?!:.,&+/#-]/gu;
@@ -67,6 +72,7 @@ export function buildContentBrief(input: {
   visualBullets?: string[];
   projectEvidence?: CreativeEvidence[];
   evidence?: CreativeEvidence[];
+  visualFormat?: VisualFormat;
 }): ContentBrief {
   const title = compact(input.title, 180);
   const text = compact(input.textContent, 1_200);
@@ -85,6 +91,7 @@ export function buildContentBrief(input: {
     visualConcept: deriveVisualConcept(technicalConflict, title),
     shortOverlayTitle: shortTitle(title),
     editorialPillar: input.editorialPillar,
+    visualFormat: input.visualFormat ?? "editorial-cover",
   };
 }
 
@@ -97,5 +104,6 @@ export function toVisualBrief(brief: ContentBrief, visualBullets: string[] = [])
     visualAnchors: visualBullets.map((item) => compact(item, 100)).filter(Boolean).slice(0, 5),
     audience: `profissionais de tecnologia e engenharia no estágio ${brief.editorialPillar}`,
     negativePrompt: "text, typography, letters, words, title, headline, logo, watermark, signature, banner, ugly text, distorted text, blurry, low quality, noise, generic technology stock art, random UI, invented architecture",
+    format: brief.visualFormat,
   };
 }

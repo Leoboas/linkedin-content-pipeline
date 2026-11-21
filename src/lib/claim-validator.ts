@@ -50,7 +50,7 @@ function hasEvidence(claim: string, evidence: string): boolean {
 async function loadEvidence(editorialLineId?: string): Promise<{ text: string; sources: string[] }> {
   const [facts, experiences, projects, line, dossier] = await Promise.all([
     prisma.professionalFact.findMany({
-      where: { publicAllowed: true, visibility: KnowledgeVisibility.PUBLIC_SAFE, evidenceStatus: { in: [KnowledgeEvidenceStatus.VERIFIED, KnowledgeEvidenceStatus.DOCUMENTED, KnowledgeEvidenceStatus.USER_CONFIRMED] } },
+      where: { publicAllowed: true, visibility: KnowledgeVisibility.PUBLIC_SAFE, evidenceStatus: { in: [KnowledgeEvidenceStatus.VERIFIED, KnowledgeEvidenceStatus.DOCUMENTED, KnowledgeEvidenceStatus.USER_CONFIRMED] }, implementationStatus: { notIn: ["PLANNED", "UNKNOWN"] } },
       select: { claim: true },
     }),
     prisma.professionalExperience.findMany({
@@ -58,7 +58,7 @@ async function loadEvidence(editorialLineId?: string): Promise<{ text: string; s
       select: { company: true, title: true, summary: true },
     }),
     prisma.portfolioProject.findMany({
-      where: { publicAllowed: true, visibility: KnowledgeVisibility.PUBLIC_SAFE, evidenceStatus: { in: [KnowledgeEvidenceStatus.VERIFIED, KnowledgeEvidenceStatus.DOCUMENTED, KnowledgeEvidenceStatus.USER_CONFIRMED] } },
+      where: { publicAllowed: true, visibility: KnowledgeVisibility.PUBLIC_SAFE, evidenceStatus: { in: [KnowledgeEvidenceStatus.VERIFIED, KnowledgeEvidenceStatus.DOCUMENTED, KnowledgeEvidenceStatus.USER_CONFIRMED] }, implementationStatus: { in: ["IMPLEMENTED", "USED_IN_PORTFOLIO"] } },
       select: { name: true, summary: true },
     }),
     editorialLineId ? prisma.editorialLine.findUnique({ where: { id: editorialLineId }, select: { cvCases: true } }) : null,

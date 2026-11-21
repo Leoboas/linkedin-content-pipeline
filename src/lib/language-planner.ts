@@ -1,11 +1,17 @@
 export type ContentLanguage = "pt-BR" | "en-US";
 export type LanguageDistribution = Record<ContentLanguage, number>;
 
-export const DEFAULT_LANGUAGE_DISTRIBUTION: LanguageDistribution = { "pt-BR": 4, "en-US": 0 };
+export const DEFAULT_LANGUAGE_DISTRIBUTION: LanguageDistribution = { "pt-BR": 2, "en-US": 2 };
+
+export function defaultLanguageDistribution(postsPerWeek: number): LanguageDistribution {
+  const count = Number.isInteger(postsPerWeek) && postsPerWeek > 0 ? Math.min(postsPerWeek, 4) : 4;
+  const english = Math.ceil(count / 2);
+  return { "pt-BR": count - english, "en-US": english };
+}
 
 export function normalizeLanguageDistribution(value: unknown, postsPerWeek = 4): LanguageDistribution {
   const count = Number.isInteger(postsPerWeek) && postsPerWeek > 0 ? postsPerWeek : 4;
-  const fallback = { "pt-BR": count, "en-US": 0 };
+  const fallback = defaultLanguageDistribution(count);
   if (!value || typeof value !== "object" || Array.isArray(value)) return fallback;
   const record = value as Record<string, unknown>;
   const pt = Number(record["pt-BR"]);
@@ -25,7 +31,7 @@ export function isValidLanguageDistribution(value: unknown, postsPerWeek: number
     && Number(record["pt-BR"]) + Number(record["en-US"]) === postsPerWeek;
 }
 
-/** Uses exact configured counts and interleaves locales without changing the distribution. */
+/** Distributes configured locales across calendar slots, starting in English on ties. */
 export function planLanguages(count: number, distributionInput: unknown): ContentLanguage[] {
   if (!Number.isInteger(count) || count <= 0) return [];
   const distribution = normalizeLanguageDistribution(distributionInput, count);
@@ -38,7 +44,7 @@ export function planLanguages(count: number, distributionInput: unknown): Conten
     const previous = result.at(-1);
     const ptRatio = ptCount === 0 ? -1 : ptRemaining / ptCount;
     const enRatio = enCount === 0 ? -1 : enRemaining / enCount;
-    const choosePt = ptRemaining > 0 && (enRemaining === 0 || (previous !== "pt-BR" && ptRatio >= enRatio) || (previous === "en-US" && ptRatio > 0));
+    const choosePt = ptRemaining > 0 && (enRemaining === 0 || (previous !== "pt-BR" && ptRatio > enRatio));
     if (choosePt) { result.push("pt-BR"); ptRemaining -= 1; }
     else { result.push("en-US"); enRemaining -= 1; }
   }

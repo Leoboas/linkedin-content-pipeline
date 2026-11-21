@@ -20,20 +20,22 @@ export async function POST(request: Request): Promise<NextResponse> {
   const url = typeof body.url === "string" ? body.url.trim() : "";
   const description = typeof body.description === "string" ? body.description.trim() : "";
   const subject = typeof body.subject === "string" ? body.subject.trim() : undefined;
+  const sourceHint = body.sourceHint === "WELLFOUND_EMAIL" ? "WELLFOUND_EMAIL" : "MANUAL";
 
   if (!url && description.length < 240) {
     return errorResponse("Informe uma URL de vaga ou cole pelo menos 240 caracteres da descrição completa.", 400);
   }
 
   try {
-    const analysis = await matchInboundJob({ url: url || undefined, subject, body: description });
+    const analysis = await matchInboundJob({ url: url || undefined, subject, body: description, sourceHint });
     return NextResponse.json(analysis, { status: 201 });
   } catch (error) {
     if (error instanceof JobDescriptionUnavailableError) {
       return NextResponse.json({
-        error: url
-          ? "O LinkedIn bloqueou a leitura automática desse link. Copie a descrição completa da vaga e envie no campo de descrição."
-          : error.message,
+        error: sourceHint === "WELLFOUND_EMAIL"
+          ? error.message
+          : url ? "O LinkedIn bloqueou a leitura automática desse link. Copie a descrição completa da vaga e envie no campo de descrição."
+            : error.message,
         blocked: Boolean(url),
       }, { status: 422 });
     }

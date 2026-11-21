@@ -49,8 +49,8 @@ function composeFluxPrompt(brief: ReturnType<typeof extractVisualBrief>, feedbac
     brief.visualAnchors.length > 0 ? `Visual anchors: ${brief.visualAnchors.join(", ")}.` : "",
     `Target audience: ${brief.audience}.`,
     projectEvidence?.trim() ? `Factual project evidence for visual direction (do not invent beyond it): ${projectEvidence.trim().slice(0, 1800)}.` : "",
-    "Style: minimalistic 3D tech editorial, dark-mode composition, clean geometric layers, high-end data engineering aesthetic, precise hierarchy, generous negative space, realistic materials, subtle depth of field.",
-    "Lighting: volumetric cyan rim light with a warm amber key light, controlled contrast, cinematic but restrained.",
+    "Style: premium, minimal technical editorial design; use restrained depth and lighting only when they support the selected visual format and specific concept.",
+    "Maintain precise hierarchy, strong contrast, generous safe margins and legibility at mobile-feed size.",
     `Strict palette: ${palette.join(", ")}; use #0F172A as the dominant background, #0EA5E9 for technical accents and #F59E0B only for metrics or focal highlights.`,
     // RAG completo não deve ser enviado ao modelo visual. Apenas o brief factual e compacto é utilizado.
     referenceInsights?.trim() && !brief.thesis ? `Visual reference cue: ${referenceInsights.trim().slice(0, 500)}.` : "",

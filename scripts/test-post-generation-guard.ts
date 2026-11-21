@@ -43,8 +43,8 @@ assert.equal(hasDuplicatePostTitle("Como projetar retries idempotentes em APIs",
 assert.equal(hasDuplicatePostTitle("Isolamento por tenant no PostgreSQL", ["Observabilidade de pipelines com Airflow"]), false);
 assert.equal(hasDuplicatePostTitle("", ["Qualquer post de tecnologia"]), false);
 const monday = new Date("2026-11-23T03:00:00.000Z");
-assert.equal(formatDateTimeLocalInBrazil(scheduledDateForPost(0, "TOFU", monday)), "2026-11-23T08:30");
-assert.equal(formatDateTimeLocalInBrazil(scheduledDateForPost(1, "MOFU", monday)), "2026-11-25T11:45");
-assert.equal(formatDateTimeLocalInBrazil(scheduledDateForPost(2, "BOFU", monday)), "2026-11-27T09:15");
+assert.equal(formatDateTimeLocalInBrazil(scheduledDateForPost(0, "TOFU", monday)), "2026-11-23T13:00");
+assert.equal(formatDateTimeLocalInBrazil(scheduledDateForPost(1, "MOFU", monday)), "2026-11-24T16:00");
+assert.equal(formatDateTimeLocalInBrazil(scheduledDateForPost(2, "BOFU", monday)), "2026-11-26T13:00");
 
 console.log("Generation guard tests passed (retryable failed slots, bounded revisions, date cadence and duplicate-title prevention).");

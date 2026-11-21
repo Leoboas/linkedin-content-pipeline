@@ -10,13 +10,12 @@ import { buildImagePrompt } from "@/lib/image-prompt-engine";
 import { prisma } from "@/lib/prisma";
 import { publishDuePost } from "@/lib/publishing";
 import { reconcileOverduePosts } from "@/lib/scheduler";
-import { pillarOrder } from "@/lib/scheduling";
 import { requestBatchIfStockIsLow } from "@/lib/stock";
 import { uploadPublicAsset } from "@/lib/storage";
-import { sendBatchToTelegram, sendFeedbackRetryPrompt, sendHuggingFaceQuotaAlert, sendPostForApproval } from "@/lib/telegram";
 import { reviewRenderedImage, type RenderedImageReview } from "@/lib/content-reviewer";
 import { getPublicationEligibility } from "@/lib/publication-eligibility";
 import { buildContentBrief } from "@/lib/creative-brief";
+import { visualFormatForPost, type VisualFormat } from "../../../config/creative-direction";
 
 interface WeeklyEventData {
   triggeredAt?: string;
@@ -136,24 +135,20 @@ export const weeklyPostPipeline = inngest.createFunction(
           qualityReview: { ...currentReview, renderedImage: visualSnapshot } as unknown as Prisma.InputJsonValue,
           qualityReviewedAt: new Date(),
         } });
-        await recordRenderedCreativeVersion({ postId: post.id, title: post.title, textContent: post.textContent, editorialPillar: post.editorialPillar, slides, prompt: imagePrompt, mediaUrl, review: visualReview ? { ...visualReview } : { status: "PENDING_HUMAN_REVIEW", score: 0 } });
+        const savedReview = post.qualityReview && typeof post.qualityReview === "object" && !Array.isArray(post.qualityReview) ? post.qualityReview as Record<string, unknown> : {};
+        const intelligence = savedReview.editorialIntelligence && typeof savedReview.editorialIntelligence === "object" && !Array.isArray(savedReview.editorialIntelligence) ? savedReview.editorialIntelligence as Record<string, unknown> : {};
+        const requestedVisualFormat = intelligence.visualFormat;
+        const validVisualFormats = new Set<VisualFormat>(["editorial-cover", "architecture-infographic", "technical-concept", "carousel-slide", "code-focused", "text-first", "editorial-illustration"]);
+        const storedVisualFormat = typeof requestedVisualFormat === "string" && validVisualFormats.has(requestedVisualFormat as VisualFormat)
+          ? requestedVisualFormat as VisualFormat
+          : visualFormatForPost(post.formatType, post.editorialPillar);
+        await recordRenderedCreativeVersion({ postId: post.id, title: post.title, textContent: post.textContent, editorialPillar: post.editorialPillar, slides, prompt: imagePrompt, mediaUrl, review: visualReview ? { ...visualReview } : { status: "PENDING_HUMAN_REVIEW", score: 0 }, visualFormat: storedVisualFormat });
       }
       return posts.map((post) => post.id);
     });
 
-    await step.run("send-telegram-approval", async () => {
-      const posts = (await prisma.post.findMany({ where: { id: { in: renderedPostIds } } })).sort((left, right) => pillarOrder(left.editorialPillar) - pillarOrder(right.editorialPillar));
-      for (const [index, post] of posts.entries()) {
-        // A IA faz a triagem, mas a aprovação final continua sendo humana.
-        // Mesmo posts NEEDS_REVISION/DRAFT devem chegar ao Telegram para não
-        // desaparecerem silenciosamente da fila de decisão.
-        if (post.status !== PostStatus.AWAITING_APPROVAL && post.status !== PostStatus.DRAFT) continue;
-        if (index > 0) await new Promise((resolve) => setTimeout(resolve, 3000));
-        await sendBatchToTelegram([post]);
-      }
-      return { sent: posts.length };
-    });
-    return { postIds };
+    const visiblePosts = await step.run("confirm-dashboard-posts", async () => prisma.post.count({ where: { id: { in: renderedPostIds } } }));
+    return { postIds, visiblePosts };
   },
 );
 
@@ -195,31 +190,22 @@ export const reformulatePostWithFeedback = inngest.createFunction(
         await refactorPostWithFeedback(data.postId, feedback, { sendTelegram: false });
         return { postId: data.postId, status: PostStatus.DRAFT };
       });
-      await step.run("send-regenerated-approval-card", async () => {
-        const regenerated = await prisma.post.findUnique({ where: { id: data.postId } });
-        if (!regenerated || regenerated.status !== PostStatus.DRAFT) throw new Error("Rascunho reformulado não encontrado para envio.");
-        if (regenerated.qualityStatus !== QualityGateStatus.PASS) {
-          console.warn("[inngest] reformulação retida pelo quality gate", { postId: data.postId, qualityStatus: regenerated.qualityStatus, qualityScore: regenerated.qualityScore });
-        }
-        // O resultado precisa sempre ficar visível para o autor. O card informa
-        // a necessidade de revisão; não deixamos a reformulação presa em DRAFT.
-        await sendPostForApproval(regenerated);
-        return { postId: data.postId, sent: true, qualityStatus: regenerated.qualityStatus, qualityScore: regenerated.qualityScore };
-      });
-      return { postId: data.postId, status: PostStatus.DRAFT, sent: true };
+      const regenerated = await prisma.post.findUnique({ where: { id: data.postId }, select: { status: true, qualityStatus: true, qualityScore: true } });
+      if (!regenerated || regenerated.status !== PostStatus.DRAFT) throw new Error("Rascunho reformulado não encontrado no Dashboard.");
+      if (regenerated.qualityStatus !== QualityGateStatus.PASS) {
+        console.warn("[inngest] reformulação retida pelo quality gate", { postId: data.postId, qualityStatus: regenerated.qualityStatus, qualityScore: regenerated.qualityScore });
+      }
+      return { postId: data.postId, status: PostStatus.DRAFT, visibleInDashboard: true, qualityStatus: regenerated.qualityStatus };
     } catch (error) {
       if (isAiCapacityError(error)) {
         await prisma.post.updateMany({
           where: { id: data.postId, status: { in: [PostStatus.REGENERATING, PostStatus.DRAFT] } },
           data: { status: PostStatus.REJECTED_PENDING_FEEDBACK },
         });
-        try { await sendHuggingFaceQuotaAlert(data.postId); }
-        catch (notificationError) { console.error("Falha ao enviar alerta de cota da IA:", notificationError); }
         console.error(`ReformulaÃ§Ã£o bloqueada por capacidade do provedor para ${data.postId}:`, error);
         return { postId: data.postId, status: PostStatus.REJECTED_PENDING_FEEDBACK, quotaBlocked: true };
       }
       await prisma.post.updateMany({ where: { id: data.postId, status: { in: [PostStatus.REGENERATING, PostStatus.DRAFT] } }, data: { status: PostStatus.REJECTED_PENDING_FEEDBACK } });
-      try { await sendFeedbackRetryPrompt(data.postId); } catch (notificationError) { console.error("Falha ao enviar retry do feedback:", notificationError); }
       console.error(`Reformulação do post ${data.postId} falhou:`, error);
       return { postId: data.postId, status: PostStatus.REJECTED_PENDING_FEEDBACK, failed: true };
     }

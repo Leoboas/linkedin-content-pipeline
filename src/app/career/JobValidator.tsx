@@ -20,6 +20,7 @@ export function JobValidator({ token, onValidated }: { token: string; onValidate
   const [url, setUrl] = useState("");
   const [subject, setSubject] = useState("");
   const [description, setDescription] = useState("");
+  const [sourceHint, setSourceHint] = useState<"MANUAL" | "WELLFOUND_EMAIL">("MANUAL");
   const [analysis, setAnalysis] = useState<JobAnalysis | null>(null);
   const [message, setMessage] = useState<{ text: string; kind: "success" | "error" } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -37,7 +38,7 @@ export function JobValidator({ token, onValidated }: { token: string; onValidate
           "Content-Type": "application/json",
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
         },
-        body: JSON.stringify({ url, subject, description }),
+        body: JSON.stringify({ url, subject, description, sourceHint }),
       });
       const payload = await response.json() as JobAnalysis & { error?: string };
       if (!response.ok) throw new Error(payload.error ?? "Não foi possível analisar a vaga.");
@@ -56,13 +57,14 @@ export function JobValidator({ token, onValidated }: { token: string; onValidate
       <div>
         <div className="admin-kicker">Validação manual</div>
         <h2>Validar uma vaga</h2>
-        <p className="admin-subtitle">Cole um link público do LinkedIn. Se o LinkedIn bloquear a leitura, cole a descrição completa para gerar o Match Score.</p>
+        <p className="admin-subtitle">Importe uma oportunidade manualmente ou a partir de um alerta Wellfound. Não acessamos sessões privadas nem automatizamos navegação/candidaturas.</p>
       </div>
     </div>
     <form className="admin-edit" onSubmit={(event) => void submit(event)}>
-      <input className="admin-input" type="url" placeholder="URL da vaga no LinkedIn (opcional se colar a descrição)" value={url} onChange={(event) => setUrl(event.target.value)} />
+      <select className="admin-input" value={sourceHint} onChange={(event) => setSourceHint(event.target.value as "MANUAL" | "WELLFOUND_EMAIL")} aria-label="Origem da vaga"><option value="MANUAL">URL ou descrição manual</option><option value="WELLFOUND_EMAIL">Alerta Wellfound autorizado</option></select>
+      <input className="admin-input" type="url" placeholder={sourceHint === "WELLFOUND_EMAIL" ? "URL oficial da vaga no Wellfound" : "URL oficial da vaga (opcional se colar a descrição)"} value={url} onChange={(event) => setUrl(event.target.value)} />
       <input className="admin-input" placeholder="Título da vaga, se desejar informar" value={subject} onChange={(event) => setSubject(event.target.value)} />
-      <textarea className="admin-textarea" rows={8} placeholder="Descrição completa da vaga (mínimo de 240 caracteres quando não houver URL)" value={description} onChange={(event) => setDescription(event.target.value)} />
+      <textarea className="admin-textarea" rows={8} placeholder={sourceHint === "WELLFOUND_EMAIL" ? "Cole o corpo do alerta ou a descrição (mínimo de 240 caracteres; a página do Wellfound não será raspada)" : "Descrição completa da vaga (mínimo de 240 caracteres quando não houver URL)"} value={description} onChange={(event) => setDescription(event.target.value)} />
       <button className="admin-button active" type="submit" disabled={busy || !token || (!url.trim() && description.trim().length < 240)}>{busy ? "Analisando..." : "Validar vaga"}</button>
     </form>
     {message && <p className={message.kind === "error" ? "admin-error" : "admin-success"} role="status">{message.text}</p>}

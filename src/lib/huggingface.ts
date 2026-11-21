@@ -248,8 +248,11 @@ function ensureVisualMix(posts: GeneratedPost[]): GeneratedPost[] {
             .filter(Boolean)
             .slice(0, 5),
         }];
-    const signatures = slides.map((slide) => (slide.title + "|" + slide.bullets.join("|")).toLowerCase().trim());
-    const hasNarrative = slides.length >= 5 && new Set(signatures).size === signatures.length;
+    const signatures = slides.map((slide) => (slide.title + "|" + slide.bullets.join("|")).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim());
+    const distinct = new Set(signatures).size === signatures.length;
+    const progression = slides.some((slide) => /^(?:0?[1-9]|[1-7])\b/u.test(slide.title.trim())
+      || /problem|problem[aá]|caus|decis|implement|resultado|result|trade.?off|validat|aprend|lesson/iu.test(`${slide.title} ${slide.bullets.join(" ")}`));
+    const hasNarrative = slides.length >= 3 && slides.length <= 7 && distinct && progression;
     return {
       ...post,
       formatType: post.formatType === "CAROUSEL_PDF" && !hasNarrative ? "SINGLE_IMAGE" : post.formatType,
@@ -393,11 +396,11 @@ export async function generateWeeklyPosts(
           language === "en-US"
             ? "Write in natural professional English for international engineering teams. Use idiomatic technical language; do not translate Portuguese sentence structures literally. Every post field, including slide titles, labels, hook and CTA, must be English."
             : "Escreva em português brasileiro natural, com parágrafos curtos e voz prática de engenharia. Todos os campos devem ficar em português, preservando nomes próprios e termos técnicos consagrados.",
-          "Choose the format by content need: TEXT_ONLY for a short decision, SINGLE_IMAGE for one visual idea, and CAROUSEL_PDF only when there is a technical narrative with at least five distinct slides.",
+          "Choose the format by content need: TEXT_ONLY for a short decision, SINGLE_IMAGE for one visual idea, and CAROUSEL_PDF only for a technical narrative with 3–7 distinct slides, clear progression, and new information on every slide.",
           "Você é um estrategista sênior de conteúdo B2B para LinkedIn.",
           language === "en-US" ? "The required output language is English (en-US). Do not write Portuguese prose." : "O idioma obrigatório da saída é português brasileiro (pt-BR). Não escreva prosa em inglês.",
           "Use AIDA: ATTENTION captura atenção com uma tensão real; INTEREST ensina; DESIRE mostra transformação e prova; ACTION contém um próximo passo claro.",
-          "O conteúdo deve ser específico para Tech Leadership, Engenharia de Dados e Growth, sem clichês corporativos.",
+          "Priorize Python Backend, Software Engineering, Data Engineering, arquitetura de sistemas, confiabilidade e liderança técnica hands-on. Growth/Marketing pode aparecer apenas como contexto de negócio quando houver evidência; não deve ser identidade ou tema central.",
           "Retorne somente JSON válido no formato {posts:[...]}, sem markdown fora dos campos.",
         ].join(" "),
       },

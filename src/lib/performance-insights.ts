@@ -10,7 +10,7 @@ export async function getPerformanceInsights(now = new Date()) {
   const periodStart = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   const [snapshots, qualifiedMatches, profileMetrics] = await Promise.all([
     prisma.postMetric.findMany({
-      where: { post: { status: PostStatus.PUBLISHED }, source: { in: ["LINKEDIN_API", "MANUAL"] }, availability: { in: ["AVAILABLE", "PARTIAL"] } },
+      where: { post: { status: PostStatus.PUBLISHED }, source: { in: ["LINKEDIN_API", "MANUAL", "CSV_IMPORT", "XLSX_IMPORT"] }, availability: { in: ["AVAILABLE", "PARTIAL"] } },
       orderBy: { capturedAt: "desc" }, take: 1000,
       include: { post: { select: { id: true, title: true, editorialPillar: true, formatType: true, language: true, topic: true, publishedAt: true, qualityScore: true, qualityStatus: true } } },
     }),
@@ -74,7 +74,7 @@ export async function getPerformanceInsights(now = new Date()) {
     totals: { impressions: sumMeasured("impressions"), reactions: sumMeasured("reactions"), comments: sumMeasured("comments"), shares: sumMeasured("shares"), postSaves: sumMeasured("postSaves"), postSends: sumMeasured("postSends"), linkClicks: sumMeasured("linkClicks"), profileViewsFromContent: sumMeasured("profileViewsFromContent") },
     postsWithMetrics: matureSnapshots.length,
     snapshots: latest.length,
-    coverage: { apiSnapshots: latest.filter((row) => row.source === "LINKEDIN_API").length, manualSnapshots: latest.filter((row) => row.source === "MANUAL").length, legacyExcluded: true },
+    coverage: { apiSnapshots: latest.filter((row) => row.source === "LINKEDIN_API").length, manualSnapshots: latest.filter((row) => ["MANUAL", "CSV_IMPORT", "XLSX_IMPORT"].includes(row.source)).length, legacyExcluded: true },
     comparisonsByExposureWindow: groups,
     trends,
     hypotheses,
@@ -94,7 +94,7 @@ export function formatWeeklyPerformanceReport(report: Awaited<ReturnType<typeof 
     "📊 <b>Aprendizado editorial semanal</b>",
     `Período: ${report.period.start.slice(0, 10)} a ${report.period.end.slice(0, 10)} (UTC). Confiança geral: ${report.confidence}.`,
     `Posts com snapshots válidos: ${report.postsWithMetrics}; snapshots analisados: ${report.snapshots}.`,
-    `Origem: ${report.coverage.apiSnapshots} snapshots de API · ${report.coverage.manualSnapshots} manuais. Registros legados não são usados como observação.`,
+    `Origem: ${report.coverage.apiSnapshots} snapshots de API · ${report.coverage.manualSnapshots} manuais/importados. Registros legados não são usados como observação.`,
     `Janelas históricas 7/14/30 dias: ${report.trends.map((trend) => `${trend.days}d=${trend.meanObservedInteractionRate === null ? "sem amostra" : `${trend.meanObservedInteractionRate}% (n=${trend.measuredRates})`}`).join(" · ")}.`,
     "", "<b>Melhores taxas observadas (não são previsões):</b>", ...(topLines.length ? topLines : ["Ainda não há dados completos suficientes para ordenar publicações."]),
     "", "<b>Hipóteses para testar (não conclusões):</b>", ...(hypothesisLines.length ? hypothesisLines : ["Amostra insuficiente; acumular publicações com janelas comparáveis antes de inferir diferenças."]),

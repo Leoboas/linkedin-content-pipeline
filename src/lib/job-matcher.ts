@@ -21,6 +21,7 @@ export interface InboundJobInput {
   url?: string;
   subject?: string;
   body: string;
+  sourceHint?: "WELLFOUND_EMAIL" | "MANUAL";
 }
 
 export interface InboundJobAnalysis {
@@ -165,7 +166,14 @@ export async function matchInboundJob(input: InboundJobInput): Promise<InboundJo
   const url = input.url?.trim() ? new URL(input.url.trim()).toString() : null;
   if (url && !/^https?:$/.test(new URL(url).protocol)) throw new Error("A URL da vaga precisa usar HTTP ou HTTPS.");
   const submittedBody = input.body.trim();
-  const jinaContent = !submittedBody && url ? await readWithJina(url) : null;
+  const wellfoundImport = input.sourceHint === "WELLFOUND_EMAIL";
+  if (wellfoundImport && (!url || new URL(url).hostname !== "wellfound.com" && !new URL(url).hostname.endsWith(".wellfound.com"))) {
+    throw new Error("Importação Wellfound exige uma URL oficial wellfound.com.");
+  }
+  if (wellfoundImport && submittedBody.length < MIN_JOB_DESCRIPTION_LENGTH) {
+    throw new JobDescriptionUnavailableError("Cole o texto do alerta ou a descrição da vaga Wellfound. A leitura automatizada da página não é utilizada.");
+  }
+  const jinaContent = !submittedBody && url && !wellfoundImport ? await readWithJina(url) : null;
   const description = (submittedBody || jinaContent || "").trim().slice(0, 100_000);
   if (!validDescription(description)) {
     throw new JobDescriptionUnavailableError(
@@ -177,7 +185,7 @@ export async function matchInboundJob(input: InboundJobInput): Promise<InboundJo
   const externalId = url ?? "telegram:" + createHash("sha256").update(description).digest("hex").slice(0, 40);
   const jobUrl = url ?? "https://www.linkedin.com/jobs/";
   const existing = await prisma.jobListing.findUnique({ where: { source_externalId: { source: JobSource.MANUAL, externalId } } });
-  const rawData = { source: url ? "telegram-url" : "telegram-manual-text", extracted: { hardSkills: extracted.hardSkills, softSkills: extracted.softSkills } };
+  const rawData = { source: wellfoundImport ? "wellfound-authorized-alert-import" : url ? "manual-url-import" : "manual-text-import", sourceMode: wellfoundImport ? "EMAIL_IMPORT" : "MANUAL_ONLY", attributionUrl: wellfoundImport ? "https://wellfound.com/terms" : null, extracted: { hardSkills: extracted.hardSkills, softSkills: extracted.softSkills } };
   const job = existing
     ? await prisma.jobListing.update({
         where: { id: existing.id },

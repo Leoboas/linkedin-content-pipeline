@@ -5,7 +5,6 @@ import { prisma } from "@/lib/prisma";
 import { uploadPublicAsset } from "@/lib/storage";
 import { reviewRenderedImage } from "@/lib/content-reviewer";
 import { buildContentBrief } from "@/lib/creative-brief";
-import { sendPostForApproval } from "@/lib/telegram";
 import { createHash } from "node:crypto";
 import { createPostTextVersion, invalidateApprovalForCreativeChange } from "@/lib/post-versioning";
 import { recordRenderedCreativeVersion } from "@/lib/content-engine";
@@ -53,10 +52,5 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
     return { ...result, mediaAssetId: asset.id };
   });
   await recordRenderedCreativeVersion({ postId: id, title: post.title, textContent: post.textContent, editorialPillar: post.editorialPillar, prompt: post.imagePrompt ?? "Manual user upload", mediaUrl, review: reviewSnapshot });
-  let telegramCardSent = false;
-  if (updated.qualityStatus === QualityGateStatus.PASS) {
-    try { await sendPostForApproval(updated); telegramCardSent = true; }
-    catch (error) { console.error("[post-media] image reviewed, but Telegram card delivery failed", { postId: id, error: error instanceof Error ? error.message : String(error) }); }
-  }
-  return NextResponse.json({ id: updated.id, mediaUrl: updated.mediaUrl, status: updated.status, qualityStatus: updated.qualityStatus, visualReview: reviewSnapshot, telegramCardSent });
+  return NextResponse.json({ id: updated.id, mediaUrl: updated.mediaUrl, status: updated.status, qualityStatus: updated.qualityStatus, visualReview: reviewSnapshot });
 }

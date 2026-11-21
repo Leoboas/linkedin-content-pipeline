@@ -46,6 +46,12 @@ export function observedInteractionRate(values: Pick<MetricValues, "impressions"
 }
 
 export type MeasurementWindow = "24H" | "72H" | "7D";
+export function measurementWindowLateness(window: string, exposureHours: number): number | null {
+  const target = window === "24H" ? 24 : window === "72H" ? 72 : window === "7D" ? 168 : null;
+  if (target === null || !Number.isFinite(exposureHours)) return null;
+  return Number(Math.max(0, exposureHours - target).toFixed(2));
+}
+
 const WINDOW_HOURS: ReadonlyArray<{ window: MeasurementWindow; hours: number }> = [
   { window: "24H", hours: 24 },
   { window: "72H", hours: 72 },
@@ -61,7 +67,13 @@ export function snapshotIdempotencyKey(postId: string, source: string, window: s
 }
 
 export function metricAvailability(values: MetricValues): "AVAILABLE" | "PARTIAL" | "UNAVAILABLE" {
-  const availableCount = Object.values(values).filter((value) => value !== null && value !== undefined).length;
+  const expected = Object.keys(POST_METRIC_FIELDS).map((key) => POST_METRIC_FIELDS[key as keyof typeof POST_METRIC_FIELDS]);
+  return metricAvailabilityForFields(values, expected);
+}
+
+export function metricAvailabilityForFields(values: Record<string, number | null>, expectedFields: readonly string[]): "AVAILABLE" | "PARTIAL" | "UNAVAILABLE" {
+  const fields = expectedFields.filter((field) => Object.hasOwn(values, field));
+  const availableCount = fields.filter((field) => values[field] !== null && values[field] !== undefined).length;
   if (availableCount === 0) return "UNAVAILABLE";
-  return availableCount === Object.keys(POST_METRIC_FIELDS).length ? "AVAILABLE" : "PARTIAL";
+  return availableCount === fields.length ? "AVAILABLE" : "PARTIAL";
 }

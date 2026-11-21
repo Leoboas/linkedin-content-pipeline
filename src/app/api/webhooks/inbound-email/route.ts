@@ -18,6 +18,11 @@ function linkedinJobUrls(value: string): string[] {
   return [...new Set(matches.map((url) => url.replace(/[.,;:!?]+$/, "")))].slice(0, 10);
 }
 
+function wellfoundJobUrls(value: string): string[] {
+  const matches = value.match(/https?:\/\/(?:www\.)?wellfound\.com\/jobs\/[a-z0-9-]+(?:\/[^\s<>\]"')]+)?/gi) ?? [];
+  return [...new Set(matches.map((url) => url.replace(/[.,;:!?]+$/, "")))].slice(0, 10);
+}
+
 async function payloadFromRequest(request: Request): Promise<{ subject: string; body: string }> {
   const contentType = request.headers.get("content-type") ?? "";
   if (contentType.includes("application/json")) {
@@ -40,24 +45,27 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   try {
     const payload = await payloadFromRequest(request);
-    const urls = linkedinJobUrls(`${payload.subject}\n${payload.body}`);
-    if (urls.length === 0) return NextResponse.json({ ok: true, received: 0, message: "Nenhuma URL de vaga do LinkedIn encontrada." });
+    const content = `${payload.subject}\n${payload.body}`;
+    const linkedinUrls = linkedinJobUrls(content).map((url) => ({ url, sourceHint: "MANUAL" as const }));
+    const wellfoundUrls = wellfoundJobUrls(content).map((url) => ({ url, sourceHint: "WELLFOUND_EMAIL" as const }));
+    const urls = [...linkedinUrls, ...wellfoundUrls];
+    if (urls.length === 0) return NextResponse.json({ ok: true, received: 0, message: "Nenhuma URL de vaga reconhecida no alerta." });
     const results = [];
     let notified = 0;
-    for (const url of urls) {
+    for (const item of urls) {
       try {
-        const result = await matchInboundJob({ url, subject: payload.subject, body: payload.body });
-        results.push({ url, jobId: result.jobId, score: result.score, isNew: result.isNew });
-        if (result.isNew && result.score >= 75) {
+        const result = await matchInboundJob({ url: item.url, subject: payload.subject, body: payload.body, sourceHint: item.sourceHint });
+        results.push({ url: item.url, source: item.sourceHint, jobId: result.jobId, score: result.score, isNew: result.isNew });
+        if (item.sourceHint === "MANUAL" && result.isNew && result.score >= 75) {
           await sendCareerJobAnalysis(process.env.TELEGRAM_CHAT_ID ?? "", result);
           notified += 1;
         }
       } catch (error) {
-        console.error("[inbound-email] falha ao processar vaga", { url, error: error instanceof Error ? error.message : String(error) });
-        results.push({ url, error: error instanceof Error ? error.message : "Falha desconhecida" });
+        console.error("[inbound-email] falha ao processar vaga", { url: item.url, source: item.sourceHint, error: error instanceof Error ? error.message : String(error) });
+        results.push({ url: item.url, source: item.sourceHint, error: error instanceof Error ? error.message : "Falha desconhecida" });
       }
     }
-    return NextResponse.json({ ok: true, received: urls.length, analyzed: results.filter((item) => "score" in item).length, notified, results });
+    return NextResponse.json({ ok: true, received: urls.length, analyzed: results.filter((item) => "score" in item).length, importedFromWellfound: wellfoundUrls.length, notified, results });
   } catch (error) {
     console.error("[inbound-email] payload invalido", error);
     return NextResponse.json({ error: error instanceof Error ? error.message : "Payload invalido." }, { status: 400 });

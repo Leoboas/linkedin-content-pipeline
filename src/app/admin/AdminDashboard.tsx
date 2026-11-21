@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { dateKeyInBrazil, formatDateInBrazil, formatDateTimeLocalInBrazil, parseDateTimeLocalInBrazil } from "@/lib/dates";
 import { AdminNav } from "./AdminNav";
+import type { EditorialScheduleSlot } from "@/lib/editorial-calendar";
 
 export interface DashboardPost {
   id: string;
@@ -16,6 +17,14 @@ export interface DashboardPost {
   scheduledDate: string;
   engagementScore: number | null;
   engagementLabel: string | null;
+  language?: string;
+  topic?: string | null;
+  editorialObjective?: string | null;
+  formatType?: string;
+  qualityScore?: number | null;
+  qualityStatus?: string | null;
+  qualityReview?: unknown;
+  evidenceSnapshot?: unknown;
 }
 
 export interface DashboardReference {
@@ -27,7 +36,7 @@ export interface DashboardReference {
 
 type View = "list" | "month" | "week";
 type Toast = { text: string; kind: "success" | "error" };
-type LanguageDistribution = { "pt-BR": number; "en-US": number };
+type EditorialPlan = { postsPerWeek: number; languageDistribution: { "pt-BR": number; "en-US": number }; weeklySchedule: EditorialScheduleSlot[] };
 type CreativePackage = { markdown: string; chatGptPrompt: string; caption: string; mediaUrl: string | null; formatType: string; error?: string };
 
 const statusClass: Record<string, string> = {
@@ -45,6 +54,35 @@ function isExpired(post: DashboardPost): boolean {
     && new Date(post.scheduledDate).getTime() < Date.now();
 }
 
+function objectValue(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function editorialMeta(post: DashboardPost): { theme: string; career: string; hook: string; visualFormat: string; careerRationale: string[]; hookRationale: string[]; breakdown: string; claims: string[] } {
+  const review = objectValue(post.qualityReview);
+  const intelligence = objectValue(review?.editorialIntelligence);
+  const career = objectValue(intelligence?.careerRelevance);
+  const hook = objectValue(intelligence?.hookQuality);
+  const careerBreakdown = objectValue(career?.breakdown);
+  const hookBreakdown = objectValue(hook?.breakdown);
+  const rationale = (value: unknown): string[] => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  const evidence = Array.isArray(post.evidenceSnapshot) ? post.evidenceSnapshot : [];
+  const claims = evidence.flatMap((item) => {
+    const record = objectValue(item);
+    return typeof record?.claim === "string" ? [`${typeof record.claimClassification === "string" ? record.claimClassification : record.kind ?? "EVIDÊNCIA"}: ${record.claim}`] : [];
+  }).slice(0, 3);
+  return {
+    theme: typeof intelligence?.theme === "string" ? intelligence.theme : post.topic ?? "Tema não classificado",
+    career: typeof career?.score === "number" ? `${career.score}/5` : "pendente",
+    hook: typeof hook?.score === "number" ? `${hook.score}/100` : "pendente",
+    visualFormat: typeof intelligence?.visualFormat === "string" ? intelligence.visualFormat : "pendente",
+    careerRationale: rationale(career?.rationale),
+    hookRationale: rationale(hook?.rationale),
+    breakdown: JSON.stringify({ career: careerBreakdown, hook: hookBreakdown }, null, 2),
+    claims,
+  };
+}
+
 export function AdminDashboard({
   initialPosts,
   initialReferences,
@@ -52,7 +90,7 @@ export function AdminDashboard({
 }: {
   initialPosts: DashboardPost[];
   initialReferences: DashboardReference[];
-  initialEditorialPlan: { postsPerWeek: number; languageDistribution: LanguageDistribution };
+  initialEditorialPlan: EditorialPlan;
 }) {
   const [posts, setPosts] = useState(initialPosts);
   const [references, setReferences] = useState(initialReferences);
@@ -173,7 +211,7 @@ export function AdminDashboard({
       setPosts((current) => current.map((item) => item.id === post.id ? { ...item, status: "REGENERATING" } : item));
       setAiPost(null);
       setAiFeedback("");
-      notify("IA e gerador de imagem acionados. Aguarde o novo card no Telegram.");
+      notify("IA e gerador de imagem acionados. A versão revisada aparecerá nesta tela após o processamento.");
       void refreshPost(post.id);
     } catch { notify("Falha de rede ao iniciar a reformulação.", "error"); }
   }
@@ -218,10 +256,10 @@ export function AdminDashboard({
     form.set("file", file);
     try {
       const response = await fetch("/api/posts/" + post.id + "/media", { method: "POST", headers: authHeaders(), body: form });
-      const payload = await response.json().catch(() => null) as { mediaUrl?: string; status?: string; qualityStatus?: string; telegramCardSent?: boolean; error?: string } | null;
+      const payload = await response.json().catch(() => null) as { mediaUrl?: string; status?: string; qualityStatus?: string; error?: string } | null;
       if (!response.ok || !payload?.mediaUrl) { notify(payload?.error ?? "Não foi possível substituir a mídia.", "error"); return; }
       setPosts((current) => current.map((item) => item.id === post.id ? { ...item, mediaUrl: payload.mediaUrl ?? null, status: payload.status ?? item.status } : item));
-      notify(payload.qualityStatus === "PASS" ? payload.telegramCardSent ? "Imagem inspecionada; novo card enviado ao Telegram para aprovação." : "Imagem inspecionada. O card não chegou ao Telegram; reenvie pela ação de aprovação." : "Imagem associada, mas o post continua bloqueado pelo quality gate.", payload.qualityStatus === "PASS" ? "success" : "error");
+      notify(payload.qualityStatus === "PASS" ? "Imagem inspecionada e disponível no Dashboard para revisão." : "Imagem associada, mas o post continua bloqueado pelo quality gate.", payload.qualityStatus === "PASS" ? "success" : "error");
     } catch { notify("Falha de rede ao enviar a mídia.", "error"); }
   }
 
@@ -267,6 +305,7 @@ export function AdminDashboard({
   async function generateBatch() {
     setGenerating(true);
     try {
+      const knownPostIds = new Set(posts.map((post) => post.id));
       const today = formatDateTimeLocalInBrazil(new Date()).slice(0, 10);
       const monday = parseDateTimeLocalInBrazil(`${today}T00:00`);
       const weekday = new Date(`${today}T12:00:00Z`).getUTCDay();
@@ -275,7 +314,20 @@ export function AdminDashboard({
       const response = await fetch("/api/posts/generate", { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() }, body: JSON.stringify({ weekStart }) });
       const payload = await response.json().catch(() => null) as { error?: string } | null;
       if (!response.ok) throw new Error(payload?.error ?? `Falha ao enfileirar lote (${response.status}).`);
-      notify(`Calendário de ${weekStart} enfileirado. Só slots novos serão criados; posts existentes não voltam ao Telegram.`);
+      notify(`Geração do calendário de ${weekStart} iniciada. Vou acompanhar a execução e atualizar esta tela.`);
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        await new Promise((resolve) => window.setTimeout(resolve, 5000));
+        const postsResponse = await fetch("/api/posts?view=active", { headers: authHeaders(), cache: "no-store" });
+        if (!postsResponse.ok) continue;
+        const currentPosts = await postsResponse.json() as DashboardPost[];
+        setPosts(currentPosts);
+        const newlyCreated = currentPosts.filter((post) => !knownPostIds.has(post.id));
+        if (newlyCreated.length > 0) {
+          notify(`${newlyCreated.length} novo(s) rascunho(s) carregado(s) no Dashboard. A revisão e aprovação são feitas aqui.`);
+          return;
+        }
+      }
+      notify("O pedido foi aceito, mas nenhum novo rascunho apareceu após 5 minutos. Verifique a execução da função no Inngest.", "error");
     } catch (error) { notify(error instanceof Error ? error.message : "Falha ao gerar lote.", "error"); }
     finally { setGenerating(false); }
   }
@@ -286,12 +338,12 @@ export function AdminDashboard({
       const response = await fetch("/api/admin/editorial-plan", {
         method: "PATCH",
         headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify(editorialPlan),
+        body: JSON.stringify({ weeklySchedule: editorialPlan.weeklySchedule }),
       });
-      const payload = await response.json() as { error?: string; postsPerWeek?: number; languageDistribution?: LanguageDistribution };
-      if (!response.ok || !payload.languageDistribution || !payload.postsPerWeek) throw new Error(payload.error ?? "Não foi possível salvar o planejamento.");
-      setEditorialPlan({ postsPerWeek: payload.postsPerWeek, languageDistribution: payload.languageDistribution });
-      notify("Distribuição de idioma salva. Ela será aplicada aos próximos lotes.");
+      const payload = await response.json() as { error?: string; weeklySchedule?: EditorialScheduleSlot[] };
+      if (!response.ok || !payload.weeklySchedule) throw new Error(payload.error ?? "Não foi possível salvar o calendário.");
+      setEditorialPlan((current) => ({ ...current, weeklySchedule: payload.weeklySchedule! }));
+      notify("Horários salvos. Idiomas e objetivos dos quatro slots permanecem fixos.");
     } catch (error) { notify(error instanceof Error ? error.message : "Falha ao salvar planejamento.", "error"); }
     finally { setSavingEditorialPlan(false); }
   }
@@ -329,17 +381,21 @@ export function AdminDashboard({
         <button className="admin-button active" disabled={generating} onClick={() => void generateBatch()}>{generating ? "Enfileirando..." : "Gerar calendário da próxima semana"}</button><button className="admin-button" onClick={() => { void fetch("/api/auth/logout", { method: "POST" }).then(() => window.location.assign("/admin")); }}>Sair</button>
       </div>
       <section className="admin-card" aria-labelledby="language-plan-title">
-        <div className="admin-kicker">Planejamento multilíngue</div><h2 id="language-plan-title">Idioma dos próximos posts</h2>
-        <div className="admin-actions">
-          <label className="admin-label">Posts por semana<select className="admin-input" value={editorialPlan.postsPerWeek} onChange={(event) => setEditorialPlan((current) => { const postsPerWeek = Number(event.target.value); const en = Math.min(current.languageDistribution["en-US"], postsPerWeek); return { postsPerWeek, languageDistribution: { "pt-BR": postsPerWeek - en, "en-US": en } }; })}><option value={3}>3 posts</option><option value={4}>4 posts</option></select></label>
-          <label className="admin-label">Português<select className="admin-input" value={editorialPlan.languageDistribution["pt-BR"]} onChange={(event) => setEditorialPlan((current) => { const pt = Number(event.target.value); return { ...current, languageDistribution: { "pt-BR": pt, "en-US": current.postsPerWeek - pt } }; })}>{Array.from({ length: editorialPlan.postsPerWeek + 1 }, (_, count) => <option key={count} value={count}>{count} post(s)</option>)}</select></label>
-          <label className="admin-label">Inglês<select className="admin-input" value={editorialPlan.languageDistribution["en-US"]} onChange={(event) => setEditorialPlan((current) => { const en = Number(event.target.value); return { ...current, languageDistribution: { "pt-BR": current.postsPerWeek - en, "en-US": en } }; })}>{Array.from({ length: editorialPlan.postsPerWeek + 1 }, (_, count) => <option key={count} value={count}>{count} post(s)</option>)}</select></label>
-          <button className="admin-button active" disabled={savingEditorialPlan} onClick={() => void saveEditorialPlan()}>{savingEditorialPlan ? "Salvando…" : "Salvar idiomas"}</button>
+        <div className="admin-kicker">Calendário-base · America/Sao_Paulo</div><h2 id="language-plan-title">Quatro slots editoriais por semana</h2>
+        <div className="admin-actions editorial-slots">
+          {editorialPlan.weeklySchedule.map((slot, index) => <label className="admin-label" key={`${slot.weekday}-${slot.language}`}>
+            {[["Segunda", "EN", "Discovery"], ["Terça", "PT-BR", "Authority"], ["Quinta", "EN", "Proof"], ["Sexta", "PT-BR", "Career Conversion"]][index].join(" · ")}
+            <input className="admin-input" type="time" value={slot.localTime} onChange={(event) => setEditorialPlan((current) => ({ ...current, weeklySchedule: current.weeklySchedule.map((item, itemIndex) => itemIndex === index ? { ...item, localTime: event.target.value } : item) }))} />
+          </label>)}
+          <button className="admin-button active" disabled={savingEditorialPlan} onClick={() => void saveEditorialPlan()}>{savingEditorialPlan ? "Salvando…" : "Salvar horários"}</button>
         </div>
-        <p className="admin-meta">As quantidades devem somar a frequência semanal. O padrão permanece em português; o inglês só entra quando configurado explicitamente. Posts existentes não são traduzidos nem alterados.</p>
+        <p className="admin-meta">Baseline experimental: 2 publicações em inglês e 2 em português. Ajustar horários não altera posts existentes nem aprova/publica conteúdo.</p>
       </section>
       {view === "list" && <div className="admin-list">{visiblePosts.map((post) => <article className={`admin-card ${statusClass[post.status] ?? ""}`} key={post.id}>
         <div className="admin-card-head"><div><strong>{post.title}</strong><div className="admin-meta">{post.editorialPillar} · {formatDate(post.scheduledDate)} · {post.engagementScore === null ? "sem score" : `${Math.round(post.engagementScore)}/100 (${post.engagementLabel ?? ""})`}</div></div><span className="admin-status">{post.status}</span></div>
+        <div className="editorial-review-summary"><span>{post.language === "en-US" ? "EN" : "PT-BR"}</span><span>{editorialMeta(post).theme}</span><span>{post.editorialObjective ?? "Objetivo pendente"}</span><span>Carreira {editorialMeta(post).career}</span><span>Hook {editorialMeta(post).hook}</span><span>{editorialMeta(post).visualFormat}</span><span>{post.formatType ?? "formato pendente"}</span><span>Quality {post.qualityStatus ?? "pending"}{post.qualityScore === null || post.qualityScore === undefined ? "" : ` · ${post.qualityScore}/100`}</span></div>
+        {editorialMeta(post).claims.length > 0 && <div className="admin-meta"><strong>Evidências:</strong> {editorialMeta(post).claims.join(" · ")}</div>}
+        {(editorialMeta(post).careerRationale.length > 0 || editorialMeta(post).hookRationale.length > 0) && <details className="editorial-score-details"><summary>Ver justificativa dos scores</summary><p><strong>Career Relevance:</strong> {editorialMeta(post).careerRationale.join(" ")}</p><p><strong>Hook Quality:</strong> {editorialMeta(post).hookRationale.join(" ")}</p><pre>{editorialMeta(post).breakdown}</pre></details>}
         {isExpired(post) && <div className="admin-expired">⚠️ Data expirada — reagende ou cancele este post.</div>}
         {post.mediaUrl && <div className="admin-media">{post.mediaUrl.toLowerCase().includes(".pdf") ? <a href={post.mediaUrl} target="_blank" rel="noreferrer">📄 Abrir PDF do carrossel</a> : <img src={post.mediaUrl} alt={`Criativo de ${post.title}`} loading="lazy" />}</div>}
         {post.status !== "PUBLISHED" && post.status !== "CANCELLED" && <label className="admin-button">🖼️ Substituir imagem<input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadMedia(post, file); event.currentTarget.value = ""; }} /></label>}

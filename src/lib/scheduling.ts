@@ -1,5 +1,6 @@
 import type { EditorialPillar } from "@prisma/client";
-import { formatDateTimeLocalInBrazil, getOptimalPostingTime, parseDateTimeLocalInBrazil } from "./dates.ts";
+import { DEFAULT_WEEKLY_SCHEDULE, normalizeWeeklySchedule, scheduledDateForEditorialSlot, type EditorialScheduleSlot } from "./editorial-calendar.ts";
+import { formatDateTimeLocalInBrazil, parseDateTimeLocalInBrazil } from "./dates.ts";
 
 const pillarOffsets: Record<EditorialPillar, number> = {
   TOFU: 0,
@@ -7,21 +8,11 @@ const pillarOffsets: Record<EditorialPillar, number> = {
   BOFU: 4,
 };
 
-const weeklySlots: Array<{ dayOffset: number; hour: number; minute: number; pillar: EditorialPillar }> = [
-  { dayOffset: 0, hour: 8, minute: 30, pillar: "TOFU" },
-  { dayOffset: 2, hour: 11, minute: 45, pillar: "MOFU" },
-  { dayOffset: 4, hour: 9, minute: 15, pillar: "BOFU" },
-  { dayOffset: 7, hour: 8, minute: 30, pillar: "TOFU" },
-];
-
 export function getPipelineBaseDate(referenceDate = new Date()): Date {
   if (Number.isNaN(referenceDate.getTime())) throw new Error("referenceDate invalida.");
 
-  const baseDate = new Date(Date.UTC(
-    referenceDate.getUTCFullYear(),
-    referenceDate.getUTCMonth(),
-    referenceDate.getUTCDate(),
-  ));
+  const localDate = formatDateTimeLocalInBrazil(referenceDate).slice(0, 10);
+  const baseDate = parseDateTimeLocalInBrazil(`${localDate}T00:00`);
   const daysSinceMonday = (baseDate.getUTCDay() + 6) % 7;
   baseDate.setUTCDate(baseDate.getUTCDate() - daysSinceMonday);
   return baseDate;
@@ -34,7 +25,7 @@ export function getPipelineBaseDate(referenceDate = new Date()): Date {
  */
 export function getNextPipelineBaseDate(referenceDate = new Date()): Date {
   const baseDate = getPipelineBaseDate(referenceDate);
-  if (getOptimalPostingTime(baseDate, "TOFU") <= referenceDate) {
+  if (scheduledDateForEditorialSlot(baseDate, DEFAULT_WEEKLY_SCHEDULE[0]) <= referenceDate) {
     baseDate.setUTCDate(baseDate.getUTCDate() + 7);
   }
   return baseDate;
@@ -44,39 +35,45 @@ export function scheduledDateForPillar(
   pillar: EditorialPillar,
   baseDate = getPipelineBaseDate(),
 ): Date {
-  return getOptimalPostingTime(baseDate, pillar);
+  const slotIndex = pillar === "TOFU" ? 0 : pillar === "MOFU" ? 1 : 2;
+  return scheduledDateForEditorialSlot(baseDate, DEFAULT_WEEKLY_SCHEDULE[slotIndex]);
 }
 
-export function scheduledDateForPost(index: number, pillar: EditorialPillar, baseDate: Date): Date {
-  const slot = weeklySlots[index];
+export function scheduledDateForPost(
+  index: number,
+  pillar: EditorialPillar,
+  baseDate: Date,
+  scheduleInput: unknown = DEFAULT_WEEKLY_SCHEDULE,
+): Date {
+  const schedule = normalizeWeeklySchedule(scheduleInput);
+  const slot = schedule[index];
   if (!slot) return scheduledDateForPillar(pillar, baseDate);
-  const monday = new Date(Date.UTC(baseDate.getUTCFullYear(), baseDate.getUTCMonth(), baseDate.getUTCDate()));
-  const daysSinceMonday = (monday.getUTCDay() + 6) % 7;
-  monday.setUTCDate(monday.getUTCDate() - daysSinceMonday + slot.dayOffset);
-  monday.setUTCHours(slot.hour + 3, slot.minute, 0, 0);
-  return monday;
+  return scheduledDateForEditorialSlot(baseDate, slot);
 }
 
 /** Rolling schedule used for a manual reset: starts today and never backfills past slots. */
 export function rollingScheduledDateForPost(index: number, pillar: EditorialPillar, startAt: Date): Date {
   if (Number.isNaN(startAt.getTime())) throw new Error("startAt invalido.");
-  const startLocal = formatDateTimeLocalInBrazil(new Date(startAt.getTime() + 30 * 60 * 1000));
-  const [datePart] = startLocal.split("T");
-  const startDate = parseDateTimeLocalInBrazil(datePart + "T00:00");
-  let businessDays = 0;
-  while (businessDays < index) {
-    startDate.setUTCDate(startDate.getUTCDate() + 1);
-    const weekday = startDate.getUTCDay();
-    if (weekday !== 0 && weekday !== 6) businessDays += 1;
+  if (index < 0 || index > 3) throw new Error("Índice de slot fora do calendário semanal.");
+  void pillar;
+  const candidates: Date[] = [];
+  let monday = getPipelineBaseDate(startAt);
+  for (let week = 0; week < 4 && candidates.length <= index; week += 1) {
+    for (const slot of DEFAULT_WEEKLY_SCHEDULE) {
+      const candidate = scheduledDateForEditorialSlot(monday, slot);
+      if (candidate > startAt) candidates.push(candidate);
+    }
+    monday = new Date(monday.getTime() + 7 * 86400000);
   }
-  const hourByPillar: Record<EditorialPillar, string> = { TOFU: "08:30", MOFU: "11:45", BOFU: "09:15" };
-  const scheduled = parseDateTimeLocalInBrazil(formatDateTimeLocalInBrazil(startDate).slice(0, 10) + "T" + hourByPillar[pillar]);
-  return index === 0 && scheduled <= startAt ? new Date(startAt.getTime() + 30 * 60 * 1000) : scheduled;
+  const scheduled = candidates[index];
+  if (!scheduled) throw new Error("Não foi encontrado um slot editorial futuro.");
+  return scheduled;
 }
 
 export function editorialSlot(index: number): { pillar: EditorialPillar; hour: string; weekday: number } {
-  const slot = weeklySlots[index] ?? weeklySlots[weeklySlots.length - 1];
-  return { pillar: slot.pillar, hour: `${String(slot.hour).padStart(2, "0")}:${String(slot.minute).padStart(2, "0")}`, weekday: slot.dayOffset + 1 };
+  const slot: EditorialScheduleSlot = DEFAULT_WEEKLY_SCHEDULE[index] ?? DEFAULT_WEEKLY_SCHEDULE[DEFAULT_WEEKLY_SCHEDULE.length - 1];
+  const pillars: EditorialPillar[] = ["TOFU", "MOFU", "BOFU", "TOFU"];
+  return { pillar: pillars[index] ?? "TOFU", hour: slot.localTime, weekday: slot.weekday };
 }
 
 export function pillarOrder(pillar: EditorialPillar): number {

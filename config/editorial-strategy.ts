@@ -43,9 +43,10 @@ export function editorialStrategyPrompt(): string {
   return [
     `Cadência: ${EDITORIAL_STRATEGY.cadence.postsPerWeek} slots por semana (${EDITORIAL_STRATEGY.cadence.weekdays.join(", ")} em ${EDITORIAL_STRATEGY.cadence.timezone}), no máximo ${EDITORIAL_STRATEGY.cadence.maxApprovalCards} cards aguardando aprovação simultaneamente.`,
     "Rotação de formato: texto para decisões curtas, imagem única para conceito/gancho e carrossel PDF para arquitetura, fluxos ou comparação; Motion permanece planejado, mas não deve ser gerado até validar compatibilidade de upload/publicação.",
-    "Distribuição editorial: aproximadamente 45% Software/Backend, 35% Data/Cloud e 20% Arquitetura/Tech Leadership.",
+    "Calendário-base fixo: segunda 13h EN, terça 16h PT-BR, quinta 13h EN, sexta 16h PT-BR; timezone America/Sao_Paulo. Não altere idioma ou slot por preferência do modelo.",
+    "Objetivo de posicionamento: Python Backend Engineer, Software Engineer, Data Engineer, Data Platform Engineer, Software Architect e Technical Lead hands-on. Growth/Marketing pode ser contexto de negócio, nunca identidade editorial central.",
+    "Roteie os temas entre Data Engineering, Python Backend, Software Architecture, Distributed Systems, Reliability & Observability e Technical Leadership. Evite repetir o mesmo subtema em mais de dois posts consecutivos.",
     "Fontes prioritárias: Unilever, Crecido, V4, SerenaERP, NASA ETL, DriveSense e experiências verificadas. Nunca invente resultado, métrica ou funcionalidade.",
-    "Alterne português do Brasil e inglês técnico conforme a qualidade do tema; comece com 2 a 3 posts em inglês por semana quando houver contexto suficiente, sem misturar idiomas no mesmo post.",
     "PLANEJAMENTO EDITORIAL:",
     `Mercados: ${EDITORIAL_STRATEGY.markets.join(", ")}. Idiomas permitidos: ${EDITORIAL_STRATEGY.languages.join(", ")}.`,
     `Cargos prioritários: ${EDITORIAL_STRATEGY.targetRoles.join(", ")}.`,

@@ -2,104 +2,61 @@
 
 import { useEffect, useState } from "react";
 
-type ResumeDraft = {
-  id: string;
-  targetRole: string;
-  template: string;
-  status: string;
-  atsScore: number;
-  content: {
-    headline?: string;
-    summary?: string;
-    skills?: Array<{ category: string; items: string[] }>;
-    experience?: Array<{ role: string; company: string; period: string; bullets: string[] }>;
-    projects?: Array<{ name: string; description: string; stack: string[] }>;
-    education?: string[];
-    languages?: string[];
-  };
-  validation?: { strengths?: string[]; warnings?: string[]; missingKeywords?: string[]; atsReady?: boolean };
-  createdAt: string;
-};
-
-const templates = [
-  ["ats-tech", "ATS Tech Lead"],
-  ["ats-data", "ATS Data Engineering"],
-  ["executive-growth", "Executivo Tech + Growth"],
+type ResumeFile = { id: string; resumeKey: string; originalName: string; profileType: string; language: string; version: string; sha256: string; byteSize: number; updatedAt: string };
+const authorizedFiles = [
+  { name: "Leonardo_Villas_Boas_Engenheiro_Dados_PTBR_V2(1).docx", title: "Data Engineering · Português (Brasil)" },
+  { name: "Leonardo_Villas_Boas_Data_Engineer_EN_V2(1).docx", title: "Data Engineer · English" },
+  { name: "Leonardo_Villas_Boas_Python_Backend_EN_V2(1).docx", title: "Python Backend · English" },
+  { name: "Leonardo_Villas_Boas_Backend_Python_PTBR_V2(1).docx", title: "Python Backend · Português (Brasil)" },
 ];
 
-export function ResumeBuilder({ token, matches }: { token: string; matches: Array<{ id: string; title: string; score: number }> }) {
-  const [drafts, setDrafts] = useState<ResumeDraft[]>([]);
-  const [targetRole, setTargetRole] = useState("Tech Lead (Data/Cloud)");
-  const [template, setTemplate] = useState("ats-tech");
-  const [jobId, setJobId] = useState("");
-  const [feedback, setFeedback] = useState("");
-  const [sourceText, setSourceText] = useState("");
-  const [selectedDraft, setSelectedDraft] = useState("");
-  const [busy, setBusy] = useState(false);
+export function ResumeBuilder({ token }: { token: string; matches?: Array<{ id: string; title: string; score: number }> }) {
+  const [resumes, setResumes] = useState<ResumeFile[]>([]);
   const [message, setMessage] = useState("");
+  const [busy, setBusy] = useState(false);
+  const headers = { ...(token ? { Authorization: `Bearer ${token}` } : {}) };
 
-  async function loadDrafts() {
-    if (!token) return;
-    const response = await fetch("/api/career/resumes", { headers: { Authorization: "Bearer " + token }, cache: "no-store" });
+  async function load() {
+    const response = await fetch("/api/career/resumes/library", { headers, cache: "no-store" });
     const payload = await response.json();
-    if (!response.ok) throw new Error(payload.error ?? "Não foi possível carregar os currículos.");
-    setDrafts(payload.drafts ?? []);
+    if (!response.ok) throw new Error(payload.error ?? "Não foi possível carregar a biblioteca.");
+    setResumes(payload.resumes ?? []);
   }
 
-  useEffect(() => { void loadDrafts().catch((error) => setMessage(error instanceof Error ? error.message : "Falha ao carregar currículos.")); }, [token]);
+  useEffect(() => { void load().catch((error) => setMessage(error instanceof Error ? error.message : "Biblioteca não disponível.")); }, []);
 
-  async function generate() {
-    if (!token || !targetRole.trim()) return;
-    setBusy(true);
+  async function importFile(file: File | undefined, expectedName: string) {
+    if (!file) return;
+    if (file.name !== expectedName) { setMessage("Selecione o arquivo autorizado com o nome exato exibido na lista."); return; }
+    setBusy(true); setMessage("");
     try {
-      const response = await fetch("/api/career/resumes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
-        body: JSON.stringify({ targetRole, template, jobId: jobId || undefined, feedback: feedback || undefined, draftId: selectedDraft || undefined, sourceText: sourceText || undefined }),
-      });
+      const form = new FormData(); form.set("file", file);
+      const response = await fetch("/api/career/resumes/library", { method: "POST", headers, body: form });
       const payload = await response.json();
-      if (!response.ok) throw new Error(payload.error ?? "Não foi possível gerar o currículo.");
-      setDrafts((current) => [payload, ...current]);
-      setSelectedDraft(payload.id);
-      setFeedback("");
-      setSourceText("");
-      setMessage("Nova versão criada para revisão: " + Math.round(payload.atsScore) + "/100.");
-    } catch (error) { setMessage(error instanceof Error ? error.message : "Falha ao gerar currículo."); }
+      if (!response.ok) throw new Error(payload.error ?? "Falha ao importar documento.");
+      await load(); setMessage(`${file.name} importado com hash SHA-256 verificado.`);
+    } catch (error) { setMessage(error instanceof Error ? error.message : "Falha ao importar currículo."); }
     finally { setBusy(false); }
   }
 
-  function downloadPdf(draftId: string) {
-    if (!token) return;
-    void fetch(`/api/career/resumes/${draftId}/pdf`, { headers: { Authorization: "Bearer " + token } }).then(async (response) => {
-      if (!response.ok) throw new Error("Não foi possível gerar o PDF.");
-      const blob = await response.blob();
-      const objectUrl = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = objectUrl;
-      link.download = `curriculo-${draftId.slice(0, 8)}.pdf`;
-      link.click();
-      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
-    }).catch((error) => setMessage(error instanceof Error ? error.message : "Falha ao baixar o PDF."));
+  async function download(resume: ResumeFile) {
+    const response = await fetch(`/api/career/resumes/library/${resume.id}`, { headers, cache: "no-store" });
+    if (!response.ok) { setMessage("Não foi possível baixar o documento privado."); return; }
+    const url = URL.createObjectURL(await response.blob());
+    const anchor = document.createElement("a"); anchor.href = url; anchor.download = resume.originalName; anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
   return <section id="resume-builder" className="admin-panel">
-    <div className="admin-section-heading"><div><div className="admin-kicker">Resume Builder</div><h2>Currículo direcionado por vaga</h2><p className="admin-subtitle">Cada geração cria uma versão para revisão. O motor combina o perfil, skills normalizadas e a descrição da vaga sem inventar experiências.</p></div></div>
-    <div className="admin-edit">
-      <input className="admin-input" value={targetRole} onChange={(event) => setTargetRole(event.target.value)} placeholder="Cargo-alvo" />
-      <select className="admin-input" value={template} onChange={(event) => setTemplate(event.target.value)}>{templates.map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select>
-      <select className="admin-input" value={jobId} onChange={(event) => setJobId(event.target.value)}><option value="">Sem vaga específica</option>{matches.slice(0, 15).map((match) => <option key={match.id} value={match.id}>{match.title} · {Math.round(match.score)}/100</option>)}</select>
-      <textarea className="admin-textarea" value={feedback} onChange={(event) => setFeedback(event.target.value)} placeholder="Feedback de revisão: ex. enfatize Airflow e AWS, reduza Growth e preserve apenas métricas comprovadas." />
-      <textarea className="admin-textarea" value={sourceText} onChange={(event) => setSourceText(event.target.value)} placeholder="Material adicional opcional: cole o texto do CV, da vaga ou de um projeto. Não inclua segredos." />
-      <button className="admin-button active" disabled={busy || !token || !targetRole.trim()} onClick={() => void generate()}>{busy ? "Gerando..." : selectedDraft ? "Gerar nova revisão" : "Gerar currículo para revisão"}</button>
-      {message && <p className="admin-meta">{message}</p>}
-    </div>
-    <div className="admin-list">{drafts.length === 0 ? <p className="admin-meta">Nenhum template gerado ainda.</p> : drafts.map((draft) => <article className="admin-card" key={draft.id}>
-      <div className="admin-card-head"><div><strong>{draft.targetRole}</strong><div className="admin-meta">{draft.template} · {draft.status} · {new Date(draft.createdAt).toLocaleString("pt-BR")}</div></div><span className="admin-status">{Math.round(draft.atsScore)}/100</span></div>
-      <p><strong>{draft.content.headline}</strong></p><p style={{ whiteSpace: "pre-wrap" }}>{draft.content.summary}</p>
-      {draft.validation?.warnings?.length ? <p className="admin-meta">⚠️ {draft.validation.warnings.join(" · ")}</p> : <p className="admin-meta">✅ Pronto para revisão humana.</p>}
-      {!!draft.content.skills?.length && <p className="admin-meta">Skills: {draft.content.skills.flatMap((group) => group.items).join(", ")}</p>}
-      <button className="admin-button" onClick={() => { setSelectedDraft(draft.id); setTargetRole(draft.targetRole); setTemplate(draft.template); }}>Solicitar nova revisão</button>
-      <button className="admin-button active" onClick={() => downloadPdf(draft.id)}>Baixar PDF para candidatura</button>
-    </article>)}</div>
+    <div className="admin-section-heading"><div><div className="admin-kicker">Biblioteca privada de currículos</div><h2>Os quatro documentos autorizados</h2><p className="admin-subtitle">O sistema não gera nem altera currículos. Os DOCX são armazenados no banco privado; importação restrita aos nomes autorizados e download protegido pela sessão.</p></div></div>
+    {message && <p className="admin-meta" role="status">{message}</p>}
+    <div className="admin-list">{authorizedFiles.map((item) => {
+      const imported = resumes.find((resume) => resume.originalName === item.name);
+      return <article className="admin-card" key={item.name}>
+        <div className="admin-card-head"><div><strong>{item.title}</strong><div className="admin-meta">{item.name}</div></div><span className="admin-status">{imported ? "Importado" : "Pendente"}</span></div>
+        {imported ? <><p className="admin-meta">Versão {imported.version} · SHA-256 {imported.sha256} · atualizado {new Date(imported.updatedAt).toLocaleString("pt-BR")}</p><button className="admin-button" disabled={busy} onClick={() => void download(imported)}>Baixar original privado</button></> : <label className="admin-button">Importar documento autorizado<input type="file" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" disabled={busy} hidden onChange={(event) => void importFile(event.currentTarget.files?.[0], item.name)} /></label>}
+      </article>;
+    })}</div>
+    {resumes.length < 4 && <p className="admin-meta">Seleção automática de CV e preparação de candidatura ficam bloqueadas até importar os quatro arquivos autorizados. A importação é manual; nenhum arquivo é lido de outras pastas ou enviado a empregadores.</p>}
   </section>;
 }

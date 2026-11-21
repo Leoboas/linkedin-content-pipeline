@@ -10,12 +10,28 @@ export interface EditorialPlan {
   recentTitles: string[];
 }
 
+type EditorialPostHistory = {
+  title: string;
+  topic: string | null;
+  editorialObjective: string | null;
+  language: string;
+  editorialPillar: EditorialPillar;
+  formatType: FormatType;
+  status: string;
+};
+
+export interface EditorialPlanContext {
+  language: string | null;
+  recentPosts: EditorialPostHistory[];
+  performance: Awaited<ReturnType<typeof getPerformanceInsights>>;
+}
+
 export async function getVisualProjectEvidenceDetails(topic: string): Promise<CreativeEvidence[]> {
   const projects = await prisma.portfolioProject.findMany({
     where: { publicAllowed: true, visibility: "PUBLIC_SAFE", evidenceStatus: { in: ["VERIFIED", "DOCUMENTED", "USER_CONFIRMED"] }, implementationStatus: { in: ["IMPLEMENTED", "USED_IN_PORTFOLIO"] } },
     orderBy: { updatedAt: "desc" },
     take: 20,
-    select: { id: true, name: true, summary: true, technologies: true, publicUrl: true },
+    select: { id: true, name: true, summary: true, technologies: true, publicUrl: true, implementationStatus: true },
   });
   const scored = projects.map((project) => ({ project, score: scoreProjectRelevance(topic, project) }));
   // Do not attach an unrelated “top” project when the topic has no meaningful
@@ -29,6 +45,7 @@ export async function getVisualProjectEvidenceDetails(topic: string): Promise<Cr
     kind: "PORTFOLIO_PROJECT",
     claim: `${project.name}: ${project.summary.slice(0, 500)} Tecnologias: ${Array.isArray(project.technologies) ? project.technologies.join(", ") : "não informadas"}`,
     verified: true,
+    claimClassification: project.implementationStatus === "IMPLEMENTED" ? "IMPLEMENTATION_DEMONSTRATED" as const : "CONCEPTUAL_EXPLANATION" as const,
   }));
 }
 
@@ -41,7 +58,7 @@ export async function getProfessionalEvidenceDetails(topic: string): Promise<Cre
         publicAllowed: true,
         visibility: "PUBLIC_SAFE",
         evidenceStatus: { in: [...acceptedStatuses] },
-        implementationStatus: { notIn: ["PLANNED", "UNKNOWN"] },
+        implementationStatus: { not: "UNKNOWN" },
         sources: { some: {} },
       },
       select: { id: true, claim: true, implementationStatus: true },
@@ -71,9 +88,10 @@ export async function getProfessionalEvidenceDetails(topic: string): Promise<Cre
     .map(({ fact }) => ({
       id: fact.id,
       source: `professionalFact:${fact.id}`,
-      kind: "CONCEPTUAL_KNOWLEDGE" as const,
+      kind: fact.implementationStatus === "PLANNED" ? "PLANNED_FEATURE" as const : "CONCEPTUAL_KNOWLEDGE" as const,
       claim: fact.claim,
       verified: true,
+      claimClassification: fact.implementationStatus === "PLANNED" ? "INFRASTRUCTURE_DEFINED_NOT_DEPLOYED" as const : "CONCEPTUAL_EXPLANATION" as const,
     }));
   const experienceEvidence = experiences
     .map((experience) => {
@@ -92,6 +110,7 @@ export async function getProfessionalEvidenceDetails(topic: string): Promise<Cre
       kind: "PROFESSIONAL_EXPERIENCE" as const,
       claim,
       verified: true,
+      claimClassification: "VERIFIED_PROFESSIONAL_EXPERIENCE" as const,
     }));
 
   return [...factEvidence, ...experienceEvidence];
@@ -122,21 +141,7 @@ function similarity(left: string, right: string): number {
   return intersection / Math.max(a.size, b.size);
 }
 
-export async function buildEditorialPlan(editorialLineId: string): Promise<EditorialPlan> {
-  const [line, recentPosts, performance] = await Promise.all([
-    prisma.editorialLine.findUnique({ where: { id: editorialLineId }, select: { language: true } }),
-    prisma.post.findMany({
-      where: {
-        editorialLineId,
-        status: { notIn: ["CANCELLED", "ARCHIVED"] },
-      },
-      orderBy: { createdAt: "desc" },
-      take: 24,
-      select: { title: true, editorialPillar: true, formatType: true, status: true },
-    }),
-    getPerformanceInsights(),
-  ]);
-
+export function buildEditorialPlanFromContext({ language, recentPosts, performance }: EditorialPlanContext): EditorialPlan {
   const recentTitles = recentPosts.map((post) => post.title);
   const repeatedPairs = recentPosts.flatMap((post, index) => {
     const duplicate = recentTitles.slice(index + 1).find((title) => similarity(post.title, title) >= 0.6);
@@ -147,6 +152,7 @@ export async function buildEditorialPlan(editorialLineId: string): Promise<Edito
     const posts = recentPosts.filter((post) => post.editorialPillar === pillar).slice(0, 5);
     return `${pillar}: ${posts.length > 0 ? posts.map((post) => `${post.title} [${post.formatType}/${post.status}]`).join(" | ") : "sem histórico recente"}`;
   });
+  const recentThemeSequence = recentPosts.map((post) => post.topic).filter((topic): topic is string => Boolean(topic)).slice(0, 12);
 
   const systemPrompt = [
     editorialStrategyPrompt(),
@@ -154,7 +160,11 @@ export async function buildEditorialPlan(editorialLineId: string): Promise<Edito
     "Não repita título, gancho, exemplo ou estrutura de posts recentes. Mude o recorte técnico, o público ou o formato.",
     "Não transforme a mesma experiência em vários posts quase idênticos. Alterne entre projeto, decisão arquitetural, incidente, trade-off e aprendizado.",
     "Use somente projetos e experiências existentes na base profissional publicável. Itens planejados ou sem evidência devem ser tratados como hipótese, nunca como resultado realizado.",
-    "Quando o contexto permitir, alterne português do Brasil e inglês técnico sem misturar idiomas dentro do mesmo post.",
+    "Atribua a cada pauta um Career Relevance Score de 0 a 5 com justificativa por cargo-alvo, tecnologia, evidência, público e engenharia prática; a nota é editorial, não previsão de desempenho.",
+    "Avalie o hook por clareza, especificidade técnica, problema reconhecível, consequência, originalidade e proximidade de evidência. Evite clickbait, absolutos e perguntas finais vagas.",
+    "A seleção de formato precisa decorrer da necessidade do conteúdo. Carrossel só quando houver progressão narrativa real; código deve ser tipográfico e legível; pauta reflexiva pode ser text-first.",
+    `Sequência recente de temas (mais novos primeiro): ${recentThemeSequence.join(" | ") || "sem temas classificados"}. Evite exceder dois posts consecutivos no mesmo subtema.`,
+    "Respeite o idioma fixado no slot do calendário; produza a semana-base com exatamente dois posts em inglês e dois em português, sem misturar idiomas dentro do post.",
     "Histórico recente por pilar:",
     ...recentByPillar,
     repeatedPairs.length > 0 ? `Possíveis repetições detectadas: ${repeatedPairs.join("; ")}` : "Nenhuma repetição forte detectada no histórico recente.",
@@ -167,7 +177,25 @@ export async function buildEditorialPlan(editorialLineId: string): Promise<Edito
       : "A amostra não sustenta hipóteses comparativas; não otimizar para um único post.",
   ].join("\n");
 
-  return { language: line?.language ?? "pt-BR", systemPrompt, recentTitles };
+  return { language: language ?? "pt-BR", systemPrompt, recentTitles };
+}
+
+export async function buildEditorialPlan(editorialLineId: string): Promise<EditorialPlan> {
+  const [line, recentPosts, performance] = await Promise.all([
+    prisma.editorialLine.findUnique({ where: { id: editorialLineId }, select: { language: true } }),
+    prisma.post.findMany({
+      where: {
+        editorialLineId,
+        status: { notIn: ["CANCELLED", "ARCHIVED"] },
+      },
+      orderBy: { createdAt: "desc" },
+      take: 24,
+      select: { title: true, topic: true, editorialObjective: true, language: true, editorialPillar: true, formatType: true, status: true },
+    }),
+    getPerformanceInsights(),
+  ]);
+
+  return buildEditorialPlanFromContext({ language: line?.language ?? null, recentPosts, performance });
 }
 
 export function isRecentTitleTooSimilar(title: string, recentTitles: string[]): boolean {

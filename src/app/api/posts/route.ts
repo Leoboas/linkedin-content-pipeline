@@ -32,6 +32,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     where: { status: { in: view === "backlog" ? backlogStatuses : activeStatuses } },
     orderBy: { scheduledFor: "asc" },
     take: 200,
+    include: { creativeBriefs: { orderBy: { createdAt: "desc" }, take: 1, select: { evidenceSnapshot: true } } },
   });
   return NextResponse.json(posts.map((post) => ({
     id: post.id,
@@ -45,5 +46,13 @@ export async function GET(request: Request): Promise<NextResponse> {
     scheduledDate: serializeDate(post.scheduledDate ?? post.scheduledFor),
     engagementScore: post.engagementScore,
     engagementLabel: post.engagementLabel,
+    language: post.language,
+    topic: post.topic,
+    editorialObjective: post.editorialObjective,
+    formatType: post.formatType,
+    qualityScore: post.qualityScore,
+    qualityStatus: post.qualityStatus,
+    qualityReview: post.qualityReview,
+    evidenceSnapshot: post.creativeBriefs[0]?.evidenceSnapshot ?? null,
   })));
 }

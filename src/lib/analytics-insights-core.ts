@@ -16,19 +16,25 @@ export type PerformanceSnapshot = {
   engagementScore: number | null;
   capturedAt: Date;
   source: string;
-  post: { id: string; title: string; editorialPillar: string; formatType: string; language: string; topic: string | null; publishedAt: Date | null; qualityScore: number | null; qualityStatus: string | null };
+  post: { id: string; title: string; editorialPillar: string; formatType: string; visualFormat?: string | null; editorialObjective?: string | null; language: string; topic: string | null; publishedAt: Date | null; qualityScore: number | null; qualityStatus: string | null };
 };
 
 export function buildPerformanceComparisonGroups(snapshots: PerformanceSnapshot[]) {
-  const groups = new Map<string, { window: string; dimension: string; value: string; postIds: Set<string>; rates: number[]; impressions: number[]; comments: number[]; shares: number[]; saves: number[]; profileViews: number[]; exposureHours: number[] }>();
+  const groups = new Map<string, { window: string; dimension: string; value: string; postIds: Set<string>; rates: number[]; impressions: number[]; reached: number[]; comments: number[]; shares: number[]; saves: number[]; profileViews: number[]; exposureHours: number[] }>();
   for (const snapshot of snapshots) {
     const interactionRate = observedInteractionRate(snapshot);
-    for (const [dimension, value] of [["pilar", snapshot.post.editorialPillar], ["formato", snapshot.post.formatType], ["idioma", snapshot.post.language], ["tema", snapshot.post.topic ?? "sem tema estruturado"]] as const) {
+    const dimensions: Array<[string, string]> = [
+      ["pilar", snapshot.post.editorialPillar], ["formato", snapshot.post.formatType], ["formato visual", snapshot.post.visualFormat ?? "não informado"],
+      ["idioma", snapshot.post.language], ["tema", snapshot.post.topic ?? "sem tema estruturado"],
+      ["objetivo", snapshot.post.editorialObjective ?? "não informado"],
+    ];
+    for (const [dimension, value] of dimensions) {
       const key = `${snapshot.measurementWindow}:${dimension}:${value}`;
-      const group = groups.get(key) ?? { window: snapshot.measurementWindow, dimension, value, postIds: new Set<string>(), rates: [], impressions: [], comments: [], shares: [], saves: [], profileViews: [], exposureHours: [] };
+      const group = groups.get(key) ?? { window: snapshot.measurementWindow, dimension, value, postIds: new Set<string>(), rates: [], impressions: [], reached: [], comments: [], shares: [], saves: [], profileViews: [], exposureHours: [] };
       group.postIds.add(snapshot.postId);
       if (interactionRate !== null) group.rates.push(interactionRate);
       if (snapshot.impressions !== null) group.impressions.push(snapshot.impressions);
+      if (snapshot.membersReached !== null) group.reached.push(snapshot.membersReached);
       if (snapshot.comments !== null) group.comments.push(snapshot.comments);
       if (snapshot.shares !== null) group.shares.push(snapshot.shares);
       if (snapshot.postSaves !== null) group.saves.push(snapshot.postSaves);
@@ -38,9 +44,15 @@ export function buildPerformanceComparisonGroups(snapshots: PerformanceSnapshot[
     }
   }
   const avg = (values: number[]) => values.length ? Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(3)) : null;
+  const med = (values: number[]) => {
+    if (!values.length) return null;
+    const sorted = [...values].sort((a, b) => a - b);
+    const middle = Math.floor(sorted.length / 2);
+    return Number((sorted.length % 2 ? sorted[middle]! : (sorted[middle - 1]! + sorted[middle]!) / 2).toFixed(3));
+  };
   return [...groups.values()].map((group) => ({
     window: group.window, dimension: group.dimension, value: group.value, sampleSize: group.postIds.size,
-    measuredRateSample: group.rates.length, meanInteractionRate: avg(group.rates), meanExposureHours: avg(group.exposureHours), meanImpressions: avg(group.impressions),
+    measuredRateSample: group.rates.length, meanInteractionRate: avg(group.rates), medianInteractionRate: med(group.rates), meanExposureHours: avg(group.exposureHours), meanImpressions: avg(group.impressions), medianImpressions: med(group.impressions), meanMembersReached: avg(group.reached), medianMembersReached: med(group.reached),
     meanComments: avg(group.comments), meanShares: avg(group.shares), meanSaves: avg(group.saves), meanProfileViewsAttributed: avg(group.profileViews),
   })).sort((a, b) => a.window.localeCompare(b.window) || a.dimension.localeCompare(b.dimension) || a.value.localeCompare(b.value));
 }

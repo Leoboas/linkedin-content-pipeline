@@ -1,7 +1,7 @@
 import type { EditorialPillar } from "@prisma/client";
 import { prisma } from "./prisma.ts";
-import { getOptimalPostingTime } from "./dates.ts";
-import { pillarOrder } from "./scheduling.ts";
+import { DEFAULT_WEEKLY_SCHEDULE, normalizeWeeklySchedule, scheduledDateForEditorialSlot, type EditorialScheduleSlot } from "./editorial-calendar.ts";
+import { getPipelineBaseDate, pillarOrder } from "./scheduling.ts";
 
 const reschedulableStatuses = ["APPROVED", "SCHEDULED"] as const;
 
@@ -9,17 +9,16 @@ function addMilliseconds(date: Date, milliseconds: number): Date {
   return new Date(date.getTime() + milliseconds);
 }
 
-export function nextValidPostingWindow(after: Date, pillar: EditorialPillar): Date {
-  let monday = new Date(Date.UTC(after.getUTCFullYear(), after.getUTCMonth(), after.getUTCDate()));
-  const daysSinceMonday = (monday.getUTCDay() + 6) % 7;
-  monday.setUTCDate(monday.getUTCDate() - daysSinceMonday);
-  let candidate = getOptimalPostingTime(monday, pillar);
-
-  while (candidate <= after) {
-    monday.setUTCDate(monday.getUTCDate() + 7);
-    candidate = getOptimalPostingTime(monday, pillar);
+export function nextValidPostingWindow(after: Date, _pillar: EditorialPillar, scheduleInput: unknown = DEFAULT_WEEKLY_SCHEDULE): Date {
+  let monday = getPipelineBaseDate(after);
+  const schedule = normalizeWeeklySchedule(scheduleInput);
+  for (let week = 0; week < 3; week += 1) {
+    const candidates = schedule.map((slot: EditorialScheduleSlot) => scheduledDateForEditorialSlot(monday, slot)).sort((a, b) => a.getTime() - b.getTime());
+    const next = candidates.find((candidate) => candidate > after);
+    if (next) return next;
+    monday = new Date(monday.getTime() + 7 * 86400000);
   }
-  return candidate;
+  throw new Error("Nenhum slot editorial futuro encontrado para reagendamento.");
 }
 
 export interface ReconciliationResult {
@@ -52,6 +51,9 @@ export async function reconcileOverduePosts(now = new Date()): Promise<Reconcili
 
   if (overdue.length === 0) return { inspected: 0, rescheduled: 0, posts: [] };
 
+  const editorialLine = await prisma.editorialLine.findFirst({ orderBy: { createdAt: "asc" }, select: { weeklySchedule: true } });
+  const schedule = normalizeWeeklySchedule(editorialLine?.weeklySchedule);
+
   const futurePosts = await prisma.post.findMany({
     where: {
       status: { in: [...reschedulableStatuses] },
@@ -72,9 +74,9 @@ export async function reconcileOverduePosts(now = new Date()): Promise<Reconcili
   const changes: ReconciliationResult["posts"] = [];
   let cursor = now;
   for (const post of ordered) {
-    let nextDate = nextValidPostingWindow(cursor, post.editorialPillar);
+    let nextDate = nextValidPostingWindow(cursor, post.editorialPillar, schedule);
     while (occupied.has(nextDate.toISOString())) {
-      nextDate = nextValidPostingWindow(addMilliseconds(nextDate, 1), post.editorialPillar);
+      nextDate = nextValidPostingWindow(addMilliseconds(nextDate, 1), post.editorialPillar, schedule);
     }
 
     const updated = await prisma.post.updateMany({
