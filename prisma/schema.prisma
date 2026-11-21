@@ -711,6 +711,7 @@ model PostMetric {
   @@index([postId, capturedAt])
   @@index([postId, measurementWindow, source])
   @@index([engagementScore])
+  @@index([importBatchId])
 }
 
 model EditorialLearningCycle {
@@ -723,7 +724,7 @@ model EditorialLearningCycle {
   scheduleSnapshot     Json     @default("[{\"weekday\":1,\"localTime\":\"13:00\",\"language\":\"en-US\"},{\"weekday\":2,\"localTime\":\"16:00\",\"language\":\"pt-BR\"},{\"weekday\":4,\"localTime\":\"13:00\",\"language\":\"en-US\"},{\"weekday\":5,\"localTime\":\"16:00\",\"language\":\"pt-BR\"}]")
   notes                String?  @db.Text
   createdAt            DateTime @default(now())
-  updatedAt            DateTime @updatedAt
+  updatedAt            DateTime @default(now()) @updatedAt
 }
 
 model EditorialExperiment {
@@ -743,7 +744,7 @@ model EditorialExperiment {
   limitations           Json?
   recommendation        String?                  @db.Text
   createdAt             DateTime                 @default(now())
-  updatedAt             DateTime                 @updatedAt
+  updatedAt             DateTime                 @default(now()) @updatedAt
   posts                 EditorialExperimentPost[]
   evaluations           EditorialExperimentEvaluation[]
 
@@ -796,7 +797,7 @@ model EditorialRecommendation {
   decisionNote    String?                       @db.Text
   decidedAt       DateTime?
   createdAt       DateTime                      @default(now())
-  updatedAt       DateTime                      @updatedAt
+  updatedAt       DateTime                      @default(now()) @updatedAt
 
   @@index([status, createdAt])
   @@index([periodStart, periodEnd])
@@ -807,7 +808,7 @@ model QualifiedAudienceCriteria {
   key       String   @unique @default("primary")
   roles     Json     @default("[\"Data Engineer\",\"Backend Engineer\",\"Senior Software Engineer\",\"Staff Engineer\",\"Principal Engineer\",\"Tech Lead\",\"Software Architect\",\"Engineering Manager\",\"Hiring Manager\",\"Technical Recruiter\"]")
   markets   Json     @default("[\"BR\",\"US\",\"EU\"]")
-  updatedAt DateTime @updatedAt
+  updatedAt DateTime @default(now()) @updatedAt
   createdAt DateTime @default(now())
 }
 
@@ -831,7 +832,7 @@ model CareerOutcome {
   evidenceNote          String?                   @db.Text
   idempotencyKey        String?                   @unique
   createdAt             DateTime                  @default(now())
-  updatedAt             DateTime                  @updatedAt
+  updatedAt             DateTime                  @default(now()) @updatedAt
   post                  Post?                     @relation(fields: [postId], references: [id], onDelete: SetNull)
   networkingActivity    NetworkingActivity?       @relation(fields: [networkingActivityId], references: [id], onDelete: SetNull)
   jobApplication        JobApplication?           @relation(fields: [jobApplicationId], references: [id], onDelete: SetNull)
@@ -879,7 +880,7 @@ model AnalyticsCollectionAttempt {
   finishedAt          DateTime?
   post                Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
 
-  @@index([postId, measurementWindow, requestedAt])
+  @@index([postId, measurementWindow, requestedAt], map: "AnalyticsCollectionAttempt_postId_measurementWindow_requestedAt")
   @@index([state, requestedAt])
 }
 
@@ -1214,6 +1215,8 @@ model JobMatch {
 
   @@unique([profileId, jobId])
   @@index([profileId, score])
+  @@index([eligibilityStatus, score])
+  @@index([recommendedResumeId])
 }
 
 model LinkedInSeoAudit {
