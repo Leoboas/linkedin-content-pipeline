@@ -19,10 +19,18 @@ const expectedApplied = [
   "20261120100000_analytics_snapshots",
   "20261120150000_job_application_crm",
   "20261121100000_linkedin_api_budget",
+  "20261121110000_align_persisted_constraint_names",
 ];
 const knownFailedMigration = "20261119130000_exact_editorial_language_counts";
 const expectedPending = [
-  "20261121110000_align_persisted_constraint_names",
+  "20261121120000_extend_career_search_run_status",
+  "20261121130000_career_intelligence_sources_and_resume_library",
+  "20261121170000_editorial_calendar_baseline",
+  "20261121180000_analytics_import_batches",
+  "20261122120000_expand_international_career_sources",
+  "20261122140000_version_job_match_score",
+  "20261122150000_networking_intelligence",
+  "20261122160000_experimental_editorial_career_outcomes",
 ];
 
 function parseEnvFile(fileName: string): Record<string, string> {
@@ -156,7 +164,7 @@ async function main(): Promise<void> {
     }
     if (successful.length < expectedApplied.length
       || !expectedApplied.every((name, index) => successful[index]?.migration_name === name)) {
-      throw new Error("O prefixo aplicado diverge das dez migrations verificadas de Production.");
+      throw new Error("O prefixo aplicado diverge das onze migrations verificadas de Production.");
     }
     if (successful.length > migrationNames.length
       || successful.some((migration, index) => migration.migration_name !== migrationNames[index])) {
@@ -171,7 +179,7 @@ async function main(): Promise<void> {
     const hasExpectedPending = pending.length === expectedPending.length
       && pending.every((name, index) => name === expectedPending[index]);
     if (pending.length !== 0 && !hasExpectedPending) {
-      throw new Error(`A cadeia pendente difere das três migrations revisadas: ${pending.join(", ") || "nenhuma"}.`);
+      throw new Error(`A cadeia pendente difere das oito migrations revisadas: ${pending.join(", ") || "nenhuma"}.`);
     }
     for (const name of pending) {
       const sql = readFileSync(resolve(migrationRoot, name, "migration.sql"), "utf8");
@@ -186,7 +194,7 @@ async function main(): Promise<void> {
       appliedMigrations: successfulNames,
       rolledBackAttempts: rolledBack.length,
       pendingMigrations: pending,
-      backupAcknowledged: "2026-11-16 (informado pelo usuário; não verificado via API Neon)",
+      backupAcknowledged: "backup-before-phase1-20261116 (branch Neon existente, pronta; parent timestamp 2026-11-17T00:29:43Z)",
       mode: shouldApply ? "apply" : "check-only",
     });
 
