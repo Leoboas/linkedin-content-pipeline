@@ -177,7 +177,7 @@ function searchUrl(title: string, location: string): string {
 
 export { normalizeCountryCode };
 
-async function searchJobs(sourceKeys: string[]): Promise<{ jobs: FeedJob[]; sourceResults: Awaited<ReturnType<typeof fetchCareerSources>>["results"]; queryCount: number }> {
+async function searchJobs(sourceKeys: string[], maxJobs = 150): Promise<{ jobs: FeedJob[]; sourceResults: Awaited<ReturnType<typeof fetchCareerSources>>["results"]; queryCount: number }> {
   const sources = await fetchCareerSources({ sourceKeys });
   const jobs = sources.jobs.filter(isRelevantEngineeringJob).map((job): FeedJob => ({
     externalId: job.externalId,
@@ -208,10 +208,10 @@ async function searchJobs(sourceKeys: string[]): Promise<{ jobs: FeedJob[]; sour
     if (!previous) deduplicated.set(key, job);
     else previous.sourceRefs = [...previous.sourceRefs, ...job.sourceRefs];
   }
-  return { jobs: [...deduplicated.values()].slice(0, 150), sourceResults: sources.results, queryCount: sources.results.filter((source) => source.status !== "NOT_SELECTED").length };
+  return { jobs: [...deduplicated.values()].slice(0, Math.max(1, Math.min(150, Math.floor(maxJobs)))), sourceResults: sources.results, queryCount: sources.results.filter((source) => source.status !== "NOT_SELECTED").length };
 }
 
-export async function runCareerScan(existingRunId?: string): Promise<{ runId: string; matches: CareerJobPreview[]; queries: number; discovered: number; message: string }> {
+export async function runCareerScan(existingRunId?: string, options?: { maxJobs?: number; sourceKeys?: CareerSourceKey[] }): Promise<{ runId: string; matches: CareerJobPreview[]; queries: number; discovered: number; message: string }> {
   const run = existingRunId
     ? await prisma.careerSearchRun.update({ where: { id: existingRunId }, data: { status: SearchRunStatus.RUNNING, errorMessage: null, completedAt: null, executionStartedAt: new Date() } })
     : await prisma.careerSearchRun.create({ data: { status: SearchRunStatus.RUNNING, executionStartedAt: new Date() } });
@@ -226,9 +226,10 @@ export async function runCareerScan(existingRunId?: string): Promise<{ runId: st
     const targetTitles = configuredTargets.length ? configuredTargets : getDefaultCareerTargetTitles();
     const locations = preferredLocations.length ? preferredLocations : [...SEARCH_LOCATIONS];
     const selectedSourceKeys = asStringArray(preferences?.sourceKeys);
-    const sourceKeys = selectedSourceKeys.length ? selectedSourceKeys : ["CODERIO_LEVER", "HIMALAYAS", "REMOTIVE", "REMOTE_OK", "WE_WORK_REMOTELY"];
+    const sourceKeys = options?.sourceKeys?.length ? options.sourceKeys : selectedSourceKeys.length ? selectedSourceKeys : ["CODERIO_LEVER", "HIMALAYAS", "REMOTIVE", "REMOTE_OK", "WE_WORK_REMOTELY"];
     const employerMarkets = asStringArray(preferences?.employerMarkets);
-    const search = await searchJobs(sourceKeys);
+    const maxJobs = Math.max(1, Math.min(150, Math.floor(options?.maxJobs ?? 150)));
+    const search = await searchJobs(sourceKeys, maxJobs);
     const resumeKeys = new Set(["data-engineering-pt-br-v2", "data-engineering-en-v2", "python-backend-en-v2", "python-backend-pt-br-v2"]);
     const authorizedResumes = await prisma.authorizedResume.findMany({ where: { profileId: profile.id, resumeKey: { in: [...resumeKeys] } }, select: { id: true, resumeKey: true, originalName: true, sha256: true, version: true } });
     const matches: CareerJobPreview[] = [];
@@ -297,7 +298,7 @@ export async function runCareerScan(existingRunId?: string): Promise<{ runId: st
       ? "Busca concluída nas fontes selecionadas. Confira origem, descrição original e elegibilidade antes de preparar cada candidatura."
       : activeSources.length > 0 && sourceErrors === activeSources.length ? "Todas as fontes selecionadas falharam nesta execução." : "As fontes selecionadas responderam, mas não retornaram vagas compatíveis com os filtros de engenharia.";
     const sourceResults = search.sourceResults.map((source) => ({ ...source, persisted: persistedBySource.get(source.sourceKey) ?? 0 }));
-    await prisma.careerSearchRun.update({ where: { id: run.id }, data: { status, queryCount: search.queryCount, resultCount: search.jobs.length, savedCount: matches.length, discardedCount: Math.max(0, search.sourceResults.reduce((sum, source) => sum + source.found, 0) - matches.length), errorCount: sourceErrors, sourceResults: sourceResults as unknown as Prisma.InputJsonValue, parameters: { targetTitles, locations, sourceKeys, employerMarkets, minimumMatchScore: preferences?.minimumMatchScore ?? 65, remoteOnly: preferences?.remoteOnly ?? false }, errorMessage: sourceErrors || !search.jobs.length ? message : null, completedAt: new Date() } });
+    await prisma.careerSearchRun.update({ where: { id: run.id }, data: { status, queryCount: search.queryCount, resultCount: search.jobs.length, savedCount: matches.length, discardedCount: Math.max(0, search.sourceResults.reduce((sum, source) => sum + source.found, 0) - matches.length), errorCount: sourceErrors, sourceResults: sourceResults as unknown as Prisma.InputJsonValue, parameters: { targetTitles, locations, sourceKeys, employerMarkets, minimumMatchScore: preferences?.minimumMatchScore ?? 65, remoteOnly: preferences?.remoteOnly ?? false, ...(options ? { acceptanceTest: true, maxJobs } : {}) }, errorMessage: sourceErrors || !search.jobs.length ? message : null, completedAt: new Date() } });
     if (status === SearchRunStatus.FAILED) throw new Error(message);
     return { runId: run.id, matches: sorted, queries: search.queryCount, discovered: search.jobs.length, message };
   } catch (error) {
