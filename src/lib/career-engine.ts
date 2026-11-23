@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { JobListingStatus, JobSource, KnowledgeEvidenceStatus, KnowledgeVisibility, Prisma, SearchRunStatus } from "@prisma/client";
+import { mayExecuteCareerRun } from "@/lib/career-run-lifecycle";
 import { getDefaultCareerTargetTitles, normalizeCareerTargetTitles, SEARCH_LOCATIONS, TARGET_JOB_TITLES } from "../../config/job-targets";
 import { prisma } from "@/lib/prisma";
 import { asStringArray, buildCareerContext, calculateMatch, tokenize } from "@/lib/career-rag";
@@ -211,10 +212,30 @@ async function searchJobs(sourceKeys: string[], maxJobs = 150): Promise<{ jobs: 
   return { jobs: [...deduplicated.values()].slice(0, Math.max(1, Math.min(150, Math.floor(maxJobs)))), sourceResults: sources.results, queryCount: sources.results.filter((source) => source.status !== "NOT_SELECTED").length };
 }
 
-export async function runCareerScan(existingRunId?: string, options?: { maxJobs?: number; sourceKeys?: CareerSourceKey[] }): Promise<{ runId: string; matches: CareerJobPreview[]; queries: number; discovered: number; message: string }> {
-  const run = existingRunId
-    ? await prisma.careerSearchRun.update({ where: { id: existingRunId }, data: { status: SearchRunStatus.RUNNING, errorMessage: null, completedAt: null, executionStartedAt: new Date() } })
-    : await prisma.careerSearchRun.create({ data: { status: SearchRunStatus.RUNNING, executionStartedAt: new Date() } });
+export async function runCareerScan(existingRunId?: string, options?: { maxJobs?: number; sourceKeys?: CareerSourceKey[] }, eventId?: string): Promise<{ runId: string; matches: CareerJobPreview[]; queries: number; discovered: number; message: string }> {
+  let run;
+  if (existingRunId) {
+    const current = await prisma.careerSearchRun.findUnique({ where: { id: existingRunId } });
+    if (!current) throw new Error(`Execução de busca ${existingRunId} não encontrada.`);
+    const tracking = current.parameters && typeof current.parameters === "object" && !Array.isArray(current.parameters)
+      ? current.parameters as Prisma.JsonObject
+      : {};
+    if (!mayExecuteCareerRun({ status: current.status, eventId, recordedEventId: typeof tracking.inngestEventId === "string" ? tracking.inngestEventId : null })) {
+      return { runId: existingRunId, matches: [], queries: 0, discovered: 0, message: `Execução ignorada: status atual ${current.status} não permite iniciar este evento.` };
+    }
+    if (current.status === SearchRunStatus.QUEUED) {
+      const claimed = await prisma.careerSearchRun.updateMany({
+        where: { id: existingRunId, status: SearchRunStatus.QUEUED },
+        data: { status: SearchRunStatus.RUNNING, errorMessage: null, completedAt: null, executionStartedAt: new Date() },
+      });
+      if (claimed.count !== 1) return { runId: existingRunId, matches: [], queries: 0, discovered: 0, message: "Execução ignorada: outro worker já alterou o estado." };
+    } else {
+      await prisma.careerSearchRun.update({ where: { id: existingRunId }, data: { status: SearchRunStatus.RUNNING, errorMessage: null, completedAt: null, executionStartedAt: new Date() } });
+    }
+    run = await prisma.careerSearchRun.findUniqueOrThrow({ where: { id: existingRunId } });
+  } else {
+    run = await prisma.careerSearchRun.create({ data: { status: SearchRunStatus.RUNNING, executionStartedAt: new Date() } });
+  }
   try {
     const profile = await getOrCreateProfile();
     const preferences = await prisma.jobSearchPreference.findUnique({ where: { profileId: profile.id } });
@@ -298,11 +319,14 @@ export async function runCareerScan(existingRunId?: string, options?: { maxJobs?
       ? "Busca concluída nas fontes selecionadas. Confira origem, descrição original e elegibilidade antes de preparar cada candidatura."
       : activeSources.length > 0 && sourceErrors === activeSources.length ? "Todas as fontes selecionadas falharam nesta execução." : "As fontes selecionadas responderam, mas não retornaram vagas compatíveis com os filtros de engenharia.";
     const sourceResults = search.sourceResults.map((source) => ({ ...source, persisted: persistedBySource.get(source.sourceKey) ?? 0 }));
-    await prisma.careerSearchRun.update({ where: { id: run.id }, data: { status, queryCount: search.queryCount, resultCount: search.jobs.length, savedCount: matches.length, discardedCount: Math.max(0, search.sourceResults.reduce((sum, source) => sum + source.found, 0) - matches.length), errorCount: sourceErrors, sourceResults: sourceResults as unknown as Prisma.InputJsonValue, parameters: { targetTitles, locations, sourceKeys, employerMarkets, minimumMatchScore: preferences?.minimumMatchScore ?? 65, remoteOnly: preferences?.remoteOnly ?? false, ...(options ? { acceptanceTest: true, maxJobs } : {}) }, errorMessage: sourceErrors || !search.jobs.length ? message : null, completedAt: new Date() } });
+    const trackingParameters = run.parameters && typeof run.parameters === "object" && !Array.isArray(run.parameters)
+      ? run.parameters as Prisma.JsonObject
+      : {};
+    await prisma.careerSearchRun.update({ where: { id: run.id }, data: { status, queryCount: search.queryCount, resultCount: search.jobs.length, savedCount: matches.length, discardedCount: Math.max(0, search.sourceResults.reduce((sum, source) => sum + source.found, 0) - matches.length), errorCount: sourceErrors, sourceResults: sourceResults as unknown as Prisma.InputJsonValue, parameters: { ...trackingParameters, targetTitles, locations, sourceKeys, employerMarkets, minimumMatchScore: preferences?.minimumMatchScore ?? 65, remoteOnly: preferences?.remoteOnly ?? false, ...(options ? { acceptanceTest: true, maxJobs } : {}) }, errorMessage: sourceErrors || !search.jobs.length ? message : null, completedAt: new Date() } });
     if (status === SearchRunStatus.FAILED) throw new Error(message);
     return { runId: run.id, matches: sorted, queries: search.queryCount, discovered: search.jobs.length, message };
   } catch (error) {
-    await prisma.careerSearchRun.update({ where: { id: run.id }, data: { status: SearchRunStatus.FAILED, errorMessage: error instanceof Error ? error.message : "Erro desconhecido", completedAt: new Date() } });
+    await prisma.careerSearchRun.updateMany({ where: { id: run.id, status: SearchRunStatus.RUNNING, executionStartedAt: run.executionStartedAt }, data: { status: SearchRunStatus.FAILED, errorMessage: error instanceof Error ? error.message : "Erro desconhecido", completedAt: new Date() } });
     throw error;
   }
 }

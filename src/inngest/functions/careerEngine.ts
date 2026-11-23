@@ -8,7 +8,7 @@ export const careerSearchPipeline = inngest.createFunction(
   async ({ event, step }) => {
     const data = event.data as { runId?: string; maxJobs?: number; sourceKeys?: CareerSourceKey[] };
     try {
-      const result = await step.run("search-match-and-audit", () => runCareerScan(data.runId, data.maxJobs && data.sourceKeys?.length ? { maxJobs: data.maxJobs, sourceKeys: data.sourceKeys } : undefined));
+      const result = await step.run("search-match-and-audit", () => runCareerScan(data.runId, data.maxJobs && data.sourceKeys?.length ? { maxJobs: data.maxJobs, sourceKeys: data.sourceKeys } : undefined, event.id));
       console.info("[career/inngest] execução concluída", { runId: result.runId, discovered: result.discovered, matches: result.matches.length, sourceRequests: result.queries });
       return { runId: result.runId, discovered: result.discovered, matches: result.matches.length };
     } catch (error) {

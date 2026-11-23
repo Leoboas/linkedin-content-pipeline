@@ -49,6 +49,7 @@
     "quality:multilingual-acceptance": "tsx scripts/test-multilingual-creative-acceptance.ts",
     "test:image": "tsx scripts/test-premium-image.ts",
     "career:scan": "node scripts/career-scan.mjs",
+    "career:run-lifecycle:test": "tsx scripts/test-career-run-lifecycle.ts",
     "career:sources:test": "tsx scripts/test-career-sources.ts",
     "jobs:cleanup-telegram": "node --experimental-strip-types scripts/cleanup-telegram-placeholders.ts",
     "prisma:generate": "prisma generate",
