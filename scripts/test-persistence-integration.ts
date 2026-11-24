@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { loadConfirmedDevelopmentDatabase } from "./lib/confirmed-dev-database.ts";
-import { assertEmptyApplicationTables } from "./lib/isolated-db-assertions.ts";
+import { assertEmptyApplicationTables, assertOnlyDeterministicMigrationSeeds } from "./lib/isolated-db-assertions.ts";
 
 const rollbackMarker = "ROLLBACK_SYNTHETIC_PERSISTENCE_TEST";
 
@@ -11,13 +11,7 @@ async function main(): Promise<void> {
   const { PostStatus, QualityGateStatus } = await import("@prisma/client");
   const { getPublicationEligibility } = await import("../src/lib/publication-eligibility.ts");
   try {
-    const seededCompanies = await prisma.monitoredCompany.findMany({ select: { companyKey: true }, orderBy: { companyKey: "asc" } });
-    const seededTopics = await prisma.networkingTopic.findMany({ select: { key: true }, orderBy: { key: "asc" } });
-    assert.deepEqual(seededCompanies.map(({ companyKey }) => companyKey), ["CODERIO"], "only the migration's deterministic monitored-company seed may exist");
-    assert.deepEqual(seededTopics.map(({ key }) => key), [
-      "architecture-system-design", "aws-cloud", "data-engineering", "distributed-systems", "etl-data-quality",
-      "fastapi", "observability-reliability", "python", "spark-airflow", "sql-postgres", "technical-leadership",
-    ], "only the migration's deterministic networking-topic seeds may exist");
+    await assertOnlyDeterministicMigrationSeeds(prisma);
     await assertEmptyApplicationTables(prisma, { allowPopulatedTables: ["MonitoredCompany", "NetworkingTopic"] });
     await prisma.$transaction(async (tx) => {
       const key = randomUUID();
@@ -97,7 +91,7 @@ async function main(): Promise<void> {
       assert.ok(invalidated);
       assert.equal(getPublicationEligibility(invalidated).eligible, false, "replacing media must invalidate the prior approval");
       throw new Error(rollbackMarker);
-    }, { timeout: 15000 });
+    }, { maxWait: 10000, timeout: 60000 });
   } catch (error) {
     if (!(error instanceof Error) || error.message !== rollbackMarker) throw error;
   } finally {

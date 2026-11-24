@@ -38,6 +38,7 @@
     "db:migrate:status": "tsx scripts/db-migrate-status.ts",
     "db:migrate:deploy": "tsx scripts/db-migrate-deploy.ts",
     "db:migrate:production": "tsx scripts/db-migrate-production.ts",
+    "db:production:guard:test": "tsx scripts/test-production-migration-guard.ts",
     "db:reconcile-projects": "tsx scripts/reconcile-project-links.ts",
     "audit:test": "tsx scripts/test-profile-audit.ts",
     "quality:review": "tsx scripts/review-post-quality.ts",

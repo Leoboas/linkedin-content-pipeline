@@ -3,35 +3,13 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { PrismaClient } from "@prisma/client";
+import { assertProductionMigrationAcknowledgements, productionExpectedAppliedMigrations, productionExpectedPendingMigrations } from "./lib/production-migration-guard.ts";
 
 const root = process.cwd();
 const expectedHost = "ep-rapid-smoke-acgsved1-pooler.sa-east-1.aws.neon.tech";
 const expectedProjectId = "dark-poetry-32873331";
 const expectedDatabase = "neondb";
-const expectedApplied = [
-  "20261116120000_phase1_knowledge_base_baseline",
-  "20261117090000_editorial_calendar_metadata",
-  "20261117130000_post_versions",
-  "20261117150000_creative_brief_versions",
-  "20261118100000_editorial_language_distribution",
-  "20261119120000_persist_creative_evidence_media_approval",
-  "20261119130000_exact_editorial_language_counts",
-  "20261120100000_analytics_snapshots",
-  "20261120150000_job_application_crm",
-  "20261121100000_linkedin_api_budget",
-  "20261121110000_align_persisted_constraint_names",
-];
 const knownFailedMigration = "20261119130000_exact_editorial_language_counts";
-const expectedPending = [
-  "20261121120000_extend_career_search_run_status",
-  "20261121130000_career_intelligence_sources_and_resume_library",
-  "20261121170000_editorial_calendar_baseline",
-  "20261121180000_analytics_import_batches",
-  "20261122120000_expand_international_career_sources",
-  "20261122140000_version_job_match_score",
-  "20261122150000_networking_intelligence",
-  "20261122160000_experimental_editorial_career_outcomes",
-];
 
 function parseEnvFile(fileName: string): Record<string, string> {
   const filePath = resolve(root, fileName);
@@ -53,19 +31,12 @@ function parseConnection(value: string) {
   };
 }
 
-function assertExplicitAcknowledgements(args: string[]): void {
-  if (!args.includes("--confirm-target=pipeline-db/main")) {
-    throw new Error("Falta --confirm-target=pipeline-db/main; nada foi conectado ou alterado.");
-  }
-  if (!args.includes("--backup-confirmed=2026-11-16")) {
-    throw new Error("Falta --backup-confirmed=2026-11-16, conforme informado pelo operador.");
-  }
-}
-
 async function main(): Promise<void> {
   const args = process.argv.slice(2);
-  assertExplicitAcknowledgements(args);
   const shouldApply = args.includes("--apply");
+  const inspectOnly = args.includes("--inspect-only");
+  if (shouldApply && inspectOnly) throw new Error("Use --inspect-only ou --apply, não ambos.");
+  const recoveryAcknowledgement = assertProductionMigrationAcknowledgements(args, { applying: shouldApply });
   const local = parseEnvFile(".env.local");
   const env = parseEnvFile(".env");
   const localUrl = local.POSTGRES_PRISMA_URL;
@@ -135,19 +106,6 @@ async function main(): Promise<void> {
         ELSE TRUE END
       ELSE TRUE END
     `;
-    if (args.includes("--inspect-only")) {
-      console.info("Estado de migrations (somente leitura)", applied.map(({ migration_name, finished_at, rolled_back_at, logs }) => ({
-        migration: migration_name,
-        finished: Boolean(finished_at),
-        rolledBack: Boolean(rolled_back_at),
-        logs,
-      })));
-      console.info("Diagnóstico SQL somente leitura", sqlProbe);
-      return;
-    }
-    if (Number(languageAudit.invalid_rows) !== 0) {
-      throw new Error(`Language distribution precondition fails for ${languageAudit.invalid_rows} EditorialLine rows; migration blocked.`);
-    }
     const successful = applied.filter((migration) => migration.finished_at && !migration.rolled_back_at);
     const unfinished = applied.filter((migration) => !migration.finished_at && !migration.rolled_back_at);
     const rolledBack = applied.filter((migration) => migration.rolled_back_at);
@@ -162,9 +120,9 @@ async function main(): Promise<void> {
     if (rolledBack.some((migration) => migration.migration_name !== knownFailedMigration)) {
       throw new Error("O histórico contém uma migration revertida não reconhecida; operação bloqueada.");
     }
-    if (successful.length < expectedApplied.length
-      || !expectedApplied.every((name, index) => successful[index]?.migration_name === name)) {
-      throw new Error("O prefixo aplicado diverge das onze migrations verificadas de Production.");
+    if (successful.length !== productionExpectedAppliedMigrations.length
+      || !productionExpectedAppliedMigrations.every((name, index) => successful[index]?.migration_name === name)) {
+      throw new Error("O histórico bem-sucedido de Production diverge das 19 migrations confirmadas; nenhuma migration será executada.");
     }
     if (successful.length > migrationNames.length
       || successful.some((migration, index) => migration.migration_name !== migrationNames[index])) {
@@ -176,10 +134,10 @@ async function main(): Promise<void> {
       if (checksum !== migration.checksum) throw new Error(`Checksum divergente para ${migration.migration_name}.`);
     }
     const pending = migrationNames.filter((name) => !successfulNames.includes(name));
-    const hasExpectedPending = pending.length === expectedPending.length
-      && pending.every((name, index) => name === expectedPending[index]);
+    const hasExpectedPending = pending.length === productionExpectedPendingMigrations.length
+      && productionExpectedPendingMigrations.every((name, index) => pending[index] === name);
     if (pending.length !== 0 && !hasExpectedPending) {
-      throw new Error(`A cadeia pendente difere das oito migrations revisadas: ${pending.join(", ") || "nenhuma"}.`);
+      throw new Error(`A cadeia pendente difere da migration esperada ${productionExpectedPendingMigrations.join(", ")}: ${pending.join(", ") || "nenhuma"}.`);
     }
     for (const name of pending) {
       const sql = readFileSync(resolve(migrationRoot, name, "migration.sql"), "utf8");
@@ -188,13 +146,28 @@ async function main(): Promise<void> {
       }
     }
 
+    if (inspectOnly) {
+      console.info("Estado de migrations (somente leitura)", applied.map(({ migration_name, finished_at, rolled_back_at, logs }) => ({
+        migration: migration_name,
+        finished: Boolean(finished_at),
+        rolledBack: Boolean(rolled_back_at),
+        logs,
+      })));
+      console.info("Diagnóstico SQL somente leitura", sqlProbe);
+      console.info("Cadeia versionada validada", { applied: successfulNames, pending });
+      return;
+    }
+    if (Number(languageAudit.invalid_rows) !== 0) {
+      throw new Error(`Language distribution precondition fails for ${languageAudit.invalid_rows} EditorialLine rows; migration blocked.`);
+    }
+
     console.info("Preflight Production aprovado", {
       target: "pipeline-db/main",
       database: dbIdentity.database_name,
       appliedMigrations: successfulNames,
       rolledBackAttempts: rolledBack.length,
       pendingMigrations: pending,
-      backupAcknowledged: "backup-before-phase1-20261116 (branch Neon existente, pronta; parent timestamp 2026-11-17T00:29:43Z)",
+      recoveryAcknowledgement: recoveryAcknowledgement ?? "Não exigido no modo check-only; obrigatório e recente para --apply.",
       mode: shouldApply ? "apply" : "check-only",
     });
 
