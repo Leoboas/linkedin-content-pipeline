@@ -5,7 +5,8 @@ import { contentQualityIssues, type QualitySlide } from "@/lib/content-quality";
 export interface PostQualityReview {
   score: number;
   status: QualityGateStatus;
-  dimensions: { hook: number; clarity: number; narrative: number; cta: number; pillarFit: number; visualBrief: number };
+  evaluation: { status: "COMPLETED"; method: "AI" | "HEURISTIC"; note?: string };
+  dimensions: { hook: number | null; clarity: number | null; narrative: number | null; cta: number | null; pillarFit: number | null; visualBrief: number | null };
   textIssues: string[];
   visualIssues: string[];
   recommendations: string[];
@@ -48,9 +49,15 @@ function parseJson(value: string): Record<string, unknown> {
   }
 }
 
-function number(value: unknown, fallback = 0): number {
+function nullableScore(value: unknown): number | null {
   const parsed = Number(value);
-  return Number.isFinite(parsed) ? Math.max(0, Math.min(100, Math.round(parsed))) : fallback;
+  return value !== null && value !== undefined && value !== "" && Number.isFinite(parsed)
+    ? Math.max(0, Math.min(100, Math.round(parsed)))
+    : null;
+}
+
+function number(value: unknown, fallback = 0): number {
+  return nullableScore(value) ?? fallback;
 }
 
 function strings(value: unknown): string[] {
@@ -74,7 +81,7 @@ function fallbackReview(post: ReviewablePost, local: { textIssues: string[]; vis
   const pillarFit = 72;
   const visualBrief = local.visualIssues.length === 0 ? 78 : 40;
   const score = Math.max(0, Math.min(100, Math.round((hook + clarity + narrative + cta + pillarFit + visualBrief) / 6 - local.textIssues.length * 4 - local.visualIssues.length * 5)));
-  return { score, status: score >= 72 && local.textIssues.length === 0 ? QualityGateStatus.PASS : QualityGateStatus.NEEDS_REVISION, dimensions: { hook, clarity, narrative, cta, pillarFit, visualBrief }, textIssues: local.textIssues, visualIssues: local.visualIssues, recommendations: [...local.textIssues, ...local.visualIssues].slice(0, 6), summary: "Revisão determinística aplicada porque o juiz de IA não estava disponível." };
+  return { score, status: score >= 72 && local.textIssues.length === 0 ? QualityGateStatus.PASS : QualityGateStatus.NEEDS_REVISION, evaluation: { status: "COMPLETED", method: "HEURISTIC", note: "Avaliador de IA indisponível; pontuação calculada por regras determinísticas." }, dimensions: { hook, clarity, narrative, cta, pillarFit, visualBrief }, textIssues: local.textIssues, visualIssues: local.visualIssues, recommendations: [...local.textIssues, ...local.visualIssues].slice(0, 6), summary: "Revisão heurística concluída; valide as recomendações antes de aprovar." };
 }
 
 export async function reviewPostQuality(post: ReviewablePost): Promise<PostQualityReview> {
@@ -98,12 +105,21 @@ export async function reviewPostQuality(post: ReviewablePost): Promise<PostQuali
     });
     const parsed = parseJson(response.choices[0]?.message.content ?? "");
     const dimensions = parsed.dimensions as Record<string, unknown> | undefined;
-    const score = number(parsed.score);
+    const score = nullableScore(parsed.score);
+    const parsedDimensions = {
+      hook: nullableScore(dimensions?.hook), clarity: nullableScore(dimensions?.clarity),
+      narrative: nullableScore(dimensions?.narrative), cta: nullableScore(dimensions?.cta),
+      pillarFit: nullableScore(dimensions?.pillarFit), visualBrief: nullableScore(dimensions?.visualBrief),
+    };
+    if (score === null || Object.values(parsedDimensions).some((value) => value === null)) {
+      throw new Error("Revisor retornou pontuação ou dimensão ausente; resultado não será convertido em zero.");
+    }
     const status = parsed.status === "BLOCKED" || local.textIssues.some((issue) => /corrompido|proibida/i.test(issue)) ? QualityGateStatus.BLOCKED : score >= 72 && local.textIssues.length === 0 ? QualityGateStatus.PASS : QualityGateStatus.NEEDS_REVISION;
     return {
       score,
       status,
-      dimensions: { hook: number(dimensions?.hook), clarity: number(dimensions?.clarity), narrative: number(dimensions?.narrative), cta: number(dimensions?.cta), pillarFit: number(dimensions?.pillarFit), visualBrief: number(dimensions?.visualBrief) },
+      evaluation: { status: "COMPLETED", method: "AI" },
+      dimensions: parsedDimensions as { hook: number; clarity: number; narrative: number; cta: number; pillarFit: number; visualBrief: number },
       textIssues: [...new Set([...local.textIssues, ...strings(parsed.textIssues)])],
       visualIssues: [...new Set([...local.visualIssues, ...strings(parsed.visualIssues)])],
       recommendations: strings(parsed.recommendations),

@@ -20,7 +20,7 @@ export default async function AdminPage() {
     prisma.post.findMany({
       where: { status: { in: [PostStatus.DRAFT, PostStatus.AWAITING_APPROVAL, PostStatus.REGENERATING, PostStatus.APPROVED, PostStatus.SCHEDULED, PostStatus.PUBLISHING, PostStatus.PUBLISHED] } },
       orderBy: { scheduledFor: "asc" }, take: 200,
-      include: { creativeBriefs: { orderBy: { createdAt: "desc" }, take: 1, select: { evidenceSnapshot: true } } },
+      include: { creativeBriefs: { orderBy: { createdAt: "desc" }, take: 1, select: { id: true, version: true, thesis: true, technicalConflict: true, concreteProblem: true, visualConcept: true, shortOverlayTitle: true, evidenceSnapshot: true, effectivePrompt: true, mediaUrl: true, aestheticScore: true, semanticScore: true, technicalScore: true, reviewStatus: true, reviewSnapshot: true, postVersionId: true, contentBrief: true, visualBrief: true } } },
     }),
     prisma.contentReference.findMany({
       orderBy: { createdAt: "desc" },
@@ -49,6 +49,8 @@ export default async function AdminPage() {
     qualityStatus: post.qualityStatus,
     qualityReview: post.qualityReview,
     evidenceSnapshot: post.creativeBriefs[0]?.evidenceSnapshot ?? null,
+    creativeBrief: post.creativeBriefs[0] ?? null,
+    currentVersionId: post.currentVersionId,
   }));
   return <AdminDashboard initialPosts={serialized} initialReferences={references.map((reference) => ({
     ...reference,
