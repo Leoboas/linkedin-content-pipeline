@@ -20,9 +20,10 @@ export interface ApplicationKitDocumentData {
   version: number;
 }
 
-function paragraphsFor(data: ApplicationKitDocumentData): Array<{ heading?: string; text: string; bullet?: boolean }> {
+function paragraphsFor(data: ApplicationKitDocumentData, part: "both" | "resume" | "cover" = "both"): Array<{ heading?: string; text: string; bullet?: boolean }> {
   const resume = data.tailoredResume;
   const lines: Array<{ heading?: string; text: string; bullet?: boolean }> = [];
+  if (part === "cover") return [{ heading: data.language === "EN" ? "COVER LETTER" : "CARTA DE APRESENTAÇÃO", text: data.coverLetter }];
   lines.push({ heading: data.language === "EN" ? "RESUME" : "CURRÍCULO", text: resume.headline ?? "" });
   lines.push({ text: resume.summary ?? "" });
   for (const group of resume.skills ?? []) {
@@ -40,7 +41,7 @@ function paragraphsFor(data: ApplicationKitDocumentData): Array<{ heading?: stri
   }
   if (resume.education?.length) lines.push({ heading: data.language === "EN" ? "EDUCATION" : "FORMAÇÃO", text: resume.education.join(" · ") });
   if (resume.languages?.length) lines.push({ heading: data.language === "EN" ? "LANGUAGES" : "IDIOMAS", text: resume.languages.join(" · ") });
-  lines.push({ heading: data.language === "EN" ? "COVER LETTER" : "CARTA DE APRESENTAÇÃO", text: data.coverLetter });
+  if (part !== "resume") lines.push({ heading: data.language === "EN" ? "COVER LETTER" : "CARTA DE APRESENTAÇÃO", text: data.coverLetter });
   return lines;
 }
 
@@ -60,8 +61,9 @@ function cleanPdfText(value: string): string {
   return value.replace(/[“”]/gu, '"').replace(/[‘’]/gu, "'").replace(/[–—]/gu, "-").replace(/•/gu, "-");
 }
 
-export async function buildApplicationKitPdf(data: ApplicationKitDocumentData): Promise<Buffer> {
-  const pdf = await PDFDocument.create();
+export async function buildApplicationKitPdf(data: ApplicationKitDocumentData, part: "both" | "resume" | "cover" = "both"): Promise<Buffer> {
+  // Stable bytes ensure the file previewed before approval matches the frozen attachment.
+  const pdf = await PDFDocument.create({ updateMetadata: false });
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
   const pageSize: [number, number] = [595.28, 841.89];
@@ -87,10 +89,10 @@ export async function buildApplicationKitPdf(data: ApplicationKitDocumentData): 
       y -= fontSize + 7;
     }
   };
-  drawWrapped(data.language === "EN" ? "APPLICATION KIT" : "KIT DE CANDIDATURA", 18, true);
+  drawWrapped(part === "resume" ? (data.language === "EN" ? "RESUME" : "CURRÍCULO") : part === "cover" ? (data.language === "EN" ? "COVER LETTER" : "CARTA DE APRESENTAÇÃO") : (data.language === "EN" ? "APPLICATION KIT" : "KIT DE CANDIDATURA"), 18, true);
   drawWrapped(`${data.jobTitle}${data.company ? ` - ${data.company}` : ""} | v${data.version}`, 10);
   y -= 12;
-  for (const line of paragraphsFor(data)) {
+  for (const line of paragraphsFor(data, part)) {
     if (line.heading) {
       if (y < 65) { page = pdf.addPage(pageSize); y = page.getHeight() - 48; }
       y -= 5;

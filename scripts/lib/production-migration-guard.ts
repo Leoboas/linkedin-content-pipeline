@@ -18,10 +18,11 @@ export const productionExpectedAppliedMigrations = [
   "20261122140000_version_job_match_score",
   "20261122150000_networking_intelligence",
   "20261122160000_experimental_editorial_career_outcomes",
+  "20261123100000_application_queue_and_kits",
 ] as const;
 
 export const productionExpectedPendingMigrations = [
-  "20261123100000_application_queue_and_kits",
+  "20261124190000_application_submission_authorization",
 ] as const;
 
 export const productionExpectedPostApplyMigrations = [

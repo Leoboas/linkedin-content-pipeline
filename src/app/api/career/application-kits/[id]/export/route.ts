@@ -11,12 +11,15 @@ export async function GET(request: Request, context: { params: Promise<{ id: str
   const { id } = await context.params;
   const url = new URL(request.url);
   const format = url.searchParams.get("format");
+  const part = url.searchParams.get("part");
   if (format !== "pdf" && format !== "docx") return NextResponse.json({ error: "format deve ser pdf ou docx." }, { status: 400 });
   const profile = await getOrCreateProfile();
   const kit = await prisma.applicationKit.findFirst({ where: { id, application: { profileId: profile.id } }, include: { application: { include: { job: { select: { title: true, company: true } } } } } });
   if (!kit) return NextResponse.json({ error: "Application Kit não encontrado." }, { status: 404 });
   const documentData = { language: kit.language, tailoredResume: kit.tailoredResume as never, coverLetter: kit.coverLetter, jobTitle: kit.application.job.title, company: kit.application.job.company, version: kit.version } as const;
-  const file = format === "pdf" ? await buildApplicationKitPdf(documentData) : await buildApplicationKitDocx(documentData);
+  if (part && !["resume", "cover"].includes(part)) return NextResponse.json({ error: "Documento inválido." }, { status: 400 });
+  if (format === "docx" && part) return NextResponse.json({ error: "A prévia separada está disponível em PDF." }, { status: 400 });
+  const file = format === "pdf" ? await buildApplicationKitPdf(documentData, part === "resume" || part === "cover" ? part : "both") : await buildApplicationKitDocx(documentData);
   const contentType = format === "pdf" ? "application/pdf" : "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
   const filename = `${kitFilenameStem(kit.application.job.title, kit.version)}.${format}`;
   return new Response(new Uint8Array(file), { headers: {

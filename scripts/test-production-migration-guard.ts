@@ -9,9 +9,9 @@ import {
 } from "./lib/production-migration-guard.ts";
 
 const now = new Date("2026-11-24T16:00:00.000Z");
-assert.equal(productionExpectedAppliedMigrations.length, 19);
-assert.deepEqual(productionExpectedPendingMigrations, ["20261123100000_application_queue_and_kits"]);
-assert.equal(productionExpectedPostApplyMigrations.length, 20);
+assert.equal(productionExpectedAppliedMigrations.length, 20);
+assert.deepEqual(productionExpectedPendingMigrations, ["20261124190000_application_submission_authorization"]);
+assert.equal(productionExpectedPostApplyMigrations.length, 21);
 assert.equal(assertProductionMigrationAcknowledgements(["--confirm-target=pipeline-db/main"], { applying: false, now }), null);
 const freshArgs = ["--confirm-target=pipeline-db/main", "--recovery-reference=pitr:pre-migration", "--recovery-verified-at=2026-11-24T15:45:00.000Z"];
 assert.equal(assertProductionMigrationAcknowledgements(freshArgs, { applying: true, now })?.recoveryReference, "pitr:pre-migration");

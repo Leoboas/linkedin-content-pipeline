@@ -55,6 +55,9 @@
     "career:run-lifecycle:test": "tsx scripts/test-career-run-lifecycle.ts",
     "career:resume-library:test": "tsx scripts/test-resume-library.ts",
     "career:application-kit:test": "tsx scripts/test-application-kit-documents.ts",
+    "career:lever:test": "tsx scripts/test-lever-application.ts",
+    "career:submission:integration": "tsx scripts/test-career-submission-integration.ts",
+    "career:submission:ui:test": "node scripts/test-career-submission-ui.mjs",
     "career:sources:test": "tsx scripts/test-career-sources.ts",
     "jobs:cleanup-telegram": "node --experimental-strip-types scripts/cleanup-telegram-placeholders.ts",
     "prisma:generate": "prisma generate",
@@ -81,6 +84,7 @@
     "@types/node": "^22.15.0",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
+    "playwright-core": "^1.65.1",
     "prisma": "6.19.3",
     "tsx": "^4.23.13",
     "typescript": "^5.9.2"

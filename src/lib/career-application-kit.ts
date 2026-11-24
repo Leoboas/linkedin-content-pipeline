@@ -234,6 +234,10 @@ export async function reviseApplicationKit(input: { kitId: string; profileId: st
   return prisma.$transaction(async (tx) => {
     const current = await tx.applicationKit.findFirst({ where: { id: input.kitId, application: { profileId: input.profileId } }, include: { application: { select: { profileId: true, jobId: true, job: { select: { title: true, description: true } } } }, baseResume: { select: { resumeKey: true, profileType: true, sha256: true } } } });
     if (!current) throw new Error("Application Kit não encontrado.");
+    await tx.$queryRaw`SELECT id FROM "JobApplication" WHERE id = ${current.applicationId}::uuid FOR UPDATE`;
+    const inFlight = await tx.applicationSubmission.findFirst({ where: { applicationId: current.applicationId, state: { in: ["SUBMITTING", "UNCERTAIN", "CONFIRMED"] } }, select: { id: true } });
+    if (inFlight) throw new Error("Não é possível alterar o pacote após o início do envio ou enquanto o resultado estiver incerto.");
+    await tx.applicationSubmission.updateMany({ where: { applicationId: current.applicationId, state: { in: ["QUEUED", "FILLING"] } }, data: { state: "REVOKED", reason: "Pacote substituído por nova revisão." } });
     const currentResume = current.tailoredResume as unknown as TailoredResume;
     let nextResume = currentResume;
     if (input.tailoredResume && typeof input.tailoredResume === "object") {

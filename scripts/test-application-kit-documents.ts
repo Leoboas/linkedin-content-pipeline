@@ -21,6 +21,11 @@ async function main() {
   const [docx, pdf] = await Promise.all([buildApplicationKitDocx(sample), buildApplicationKitPdf(sample)]);
   assert.equal(docx.subarray(0, 2).toString("ascii"), "PK");
   assert.equal(pdf.subarray(0, 5).toString("ascii"), "%PDF-");
+  for (const part of ["resume", "cover"] as const) {
+    const first = await buildApplicationKitPdf(sample, part);
+    const second = await buildApplicationKitPdf(sample, part);
+    assert.deepEqual(first, second, `${part} PDF preview must match the frozen attachment`);
+  }
   assert.match(kitFilenameStem(sample.jobTitle, sample.version), /engenheiro-de-dados-application-kit-v2/u);
   console.log("application kit document acceptance: synthetic DOCX/PDF export and versioned filename passed.");
 }

@@ -1224,6 +1224,7 @@ model JobApplication {
   careerOutcomes       CareerOutcome[]
   events               JobApplicationEvent[]
   kits                 ApplicationKit[]
+  submissions          ApplicationSubmission[]
 
   @@unique([profileId, jobId])
   @@index([profileId, status, updatedAt])
@@ -1271,10 +1272,40 @@ model ApplicationKit {
   application            JobApplication             @relation(fields: [applicationId], references: [id], onDelete: Cascade)
   baseResume             AuthorizedResume?          @relation(fields: [baseResumeId], references: [id], onDelete: SetNull)
   resumeDraft            ResumeDraft?               @relation(fields: [resumeDraftId], references: [id], onDelete: SetNull)
+  submission             ApplicationSubmission?
 
   @@unique([applicationId, version])
   @@index([applicationId, createdAt])
   @@index([reviewStatus, createdAt])
+}
+
+// Separate explicit authorization: existing document approvals never create a submission.
+model ApplicationSubmission {
+  id              String         @id @default(uuid()) @db.Uuid
+  applicationId   String         @db.Uuid
+  kitId           String         @unique @db.Uuid
+  destinationUrl  String
+  formSnapshot    Json
+  answersSnapshot Json
+  resumePdf       Bytes          @db.ByteA
+  coverLetterPdf  Bytes          @db.ByteA
+  packageHash     String
+  dryRun          Boolean        @default(false)
+  sandbox         Boolean        @default(false)
+  state           String         @default("QUEUED")
+  reason          String?        @db.Text
+  portalReceipt   String?
+  authorizedAt    DateTime       @default(now())
+  dispatchedAt    DateTime?
+  startedAt       DateTime?
+  submittingAt    DateTime?
+  confirmedAt     DateTime?
+  updatedAt       DateTime       @updatedAt
+  application     JobApplication @relation(fields: [applicationId], references: [id], onDelete: Restrict)
+  kit             ApplicationKit @relation(fields: [kitId], references: [id], onDelete: Restrict)
+
+  @@index([state, dispatchedAt])
+  @@index([applicationId, authorizedAt])
 }
 
 model JobMatch {
