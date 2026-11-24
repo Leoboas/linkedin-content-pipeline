@@ -6,7 +6,7 @@ import { PrismaClient } from "@prisma/client";
 import { assertProductionMigrationAcknowledgements, productionExpectedAppliedMigrations, productionExpectedPendingMigrations } from "./lib/production-migration-guard.ts";
 
 const root = process.cwd();
-const expectedHost = "ep-rapid-smoke-acgsved1-pooler.sa-east-1.aws.neon.tech";
+const expectedHost = "ep-rapid-smoke-acgsved1.sa-east-1.aws.neon.tech";
 const expectedProjectId = "dark-poetry-32873331";
 const expectedDatabase = "neondb";
 const knownFailedMigration = "20261119130000_exact_editorial_language_counts";
@@ -39,9 +39,9 @@ async function main(): Promise<void> {
   const recoveryAcknowledgement = assertProductionMigrationAcknowledgements(args, { applying: shouldApply });
   const local = parseEnvFile(".env.local");
   const env = parseEnvFile(".env");
-  const localUrl = local.POSTGRES_PRISMA_URL;
-  const envUrl = env.POSTGRES_PRISMA_URL;
-  if (!localUrl || !envUrl) throw new Error("POSTGRES_PRISMA_URL deve existir nos dois arquivos locais.");
+  const localUrl = local.POSTGRES_URL_NON_POOLING ?? local.DATABASE_URL_UNPOOLED;
+  const envUrl = env.POSTGRES_URL_NON_POOLING ?? env.DATABASE_URL_UNPOOLED;
+  if (!localUrl || !envUrl) throw new Error("Uma URL Neon direta (POSTGRES_URL_NON_POOLING ou DATABASE_URL_UNPOOLED) deve existir nos dois arquivos locais.");
 
   const localTarget = parseConnection(localUrl);
   const envTarget = parseConnection(envUrl);
@@ -49,13 +49,23 @@ async function main(): Promise<void> {
     throw new Error(".env e .env.local apontam para alvos diferentes; nenhuma conexão foi aberta.");
   }
   if (localTarget.url.hostname !== expectedHost || localTarget.url.pathname !== `/${expectedDatabase}` || localTarget.url.username !== "neondb_owner") {
-    throw new Error("O alvo local não corresponde exatamente ao endpoint autorizado de Production pipeline-db/main.");
+    throw new Error("A URL direta não corresponde exatamente ao endpoint autorizado de Production pipeline-db/main.");
+  }
+  for (const [fileName, values] of [[".env.local", local], [".env", env]] as const) {
+    const pooledUrl = values.POSTGRES_PRISMA_URL ?? values.DATABASE_URL;
+    if (!pooledUrl) throw new Error(`${fileName} deve conter POSTGRES_PRISMA_URL ou DATABASE_URL para validar o endpoint pooler.`);
+    const pooled = parseConnection(pooledUrl);
+    const pooledHostWithoutSuffix = pooled.url.hostname.replace("-pooler", "");
+    if (pooledHostWithoutSuffix !== localTarget.url.hostname || pooled.url.pathname !== localTarget.url.pathname) {
+      throw new Error(`${fileName} pooled e direto não apontam para o mesmo endpoint/database Production.`);
+    }
   }
   const projectIds = [local.NEON_PROJECT_ID, env.NEON_PROJECT_ID].filter(Boolean);
   if (projectIds.some((id) => id !== expectedProjectId)) {
     throw new Error("NEON_PROJECT_ID diverge do projeto Production confirmado.");
   }
 
+  // Prisma migrate and the preflight both require Neon direct connections, not PgBouncer.
   process.env.POSTGRES_PRISMA_URL = localUrl;
   process.env.DATABASE_URL = localUrl;
   const prisma = new PrismaClient();
