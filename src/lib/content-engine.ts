@@ -403,7 +403,7 @@ export async function generateNewPostBatch(options: BatchOptions = {}): Promise<
     const claimValidation = await validateContentClaims({ title: post.title, textContent: post.textContent, editorialLineId: editorialLine.id });
     const finalQualityReview = {
       ...qualityReview,
-      status: claimValidation.blocked ? QualityGateStatus.BLOCKED : qualityReview.status,
+      status: claimValidation.blocked ? QualityGateStatus.BLOCKED : qualityReview.evaluation.method !== "AI" ? QualityGateStatus.NEEDS_REVISION : qualityReview.status,
       textIssues: [...qualityReview.textIssues, ...claimValidation.unsupportedClaims.map((claim) => `afirmação sem evidência: ${claim}`)],
       recommendations: [...qualityReview.recommendations, ...(claimValidation.blocked ? ["Remova ou comprove as métricas e resultados destacados antes da aprovação."] : [])],
       summary: claimValidation.blocked ? "Post retido: há afirmações quantitativas sem evidência na base profissional." : qualityReview.summary,
@@ -434,7 +434,7 @@ export async function generateNewPostBatch(options: BatchOptions = {}): Promise<
         engagementScore: prediction.score,
         engagementLabel: prediction.label,
         status: !usedDeterministicFallback && finalQualityReview.status === QualityGateStatus.PASS && ids.length < availableSlots ? PostStatus.AWAITING_APPROVAL : PostStatus.DRAFT,
-        qualityScore: usedDeterministicFallback ? 0 : Math.min(finalQualityReview.score, claimValidation.score),
+        qualityScore: Math.min(finalQualityReview.score, claimValidation.score),
         qualityStatus: usedDeterministicFallback ? QualityGateStatus.NEEDS_REVISION : finalQualityReview.status,
         qualityReview: qualityReviewJson({ ...finalQualityReview, editorialIntelligence: {
           theme,
@@ -570,7 +570,7 @@ export async function refactorPostWithFeedback(
   const claimValidation = await validateContentClaims({ title: regenerated.title, textContent: regenerated.textContent, editorialLineId: current.editorialLineId ?? undefined });
   const finalQualityReview = {
     ...qualityReview,
-    status: claimValidation.blocked ? QualityGateStatus.BLOCKED : !visualReviewPassed ? QualityGateStatus.NEEDS_REVISION : qualityReview.status,
+    status: claimValidation.blocked ? QualityGateStatus.BLOCKED : qualityReview.evaluation.method !== "AI" || !visualReviewPassed ? QualityGateStatus.NEEDS_REVISION : qualityReview.status,
     textIssues: [...qualityReview.textIssues, ...claimValidation.unsupportedClaims.map((claim) => `afirmação sem evidência: ${claim}`)],
     recommendations: [...qualityReview.recommendations, ...(claimValidation.blocked ? ["Remova ou comprove as métricas e resultados destacados antes da aprovação."] : [])],
     summary: claimValidation.blocked ? "Reformulação retida: há afirmações quantitativas sem evidência." : qualityReview.summary,
@@ -621,7 +621,11 @@ export async function refactorPostWithFeedback(
       engagementLabel: prediction.label,
       feedbackText: feedback,
       status: PostStatus.DRAFT,
-      qualityScore: Math.min(finalQualityReview.score, claimValidation.score, formatDecision.formatType === FormatType.TEXT_ONLY ? 100 : renderedImageReview?.score ?? 0),
+      qualityScore: formatDecision.formatType === FormatType.TEXT_ONLY
+        ? Math.min(finalQualityReview.score, claimValidation.score)
+        : renderedImageReview
+          ? Math.min(finalQualityReview.score, claimValidation.score, renderedImageReview.score)
+          : null,
       qualityStatus: finalQualityReview.status,
       qualityReview: qualityReviewJson(finalQualityReview),
       qualityReviewedAt: new Date(),

@@ -13,7 +13,7 @@ async function main(): Promise<void> {
   let confirmed: Array<{ postId: string; projectKey: string; role: "PRIMARY" | "SECONDARY" }> = [];
   try { confirmed = JSON.parse(await readFile(mappingPath, "utf8")) as typeof confirmed; } catch { /* dry-run does not require a confirmation file */ }
   const apply = process.argv.includes("--apply-confirmed");
-  const report = { mode: apply ? "apply-confirmed" : "dry-run", target: { projectId: target.projectId, branchId: target.branchId, fingerprint: target.fingerprint }, scanned: posts.length, suggestions, confirmedMappings: confirmed.length };
+  const report = { mode: apply ? "apply-confirmed" : "dry-run", target: { provider: target.provider, target: target.target }, scanned: posts.length, suggestions, confirmedMappings: confirmed.length };
   console.log(JSON.stringify(report, null, 2));
   if (!apply) return;
   if (confirmed.length === 0) throw new Error("Nenhum mapeamento humano confirmado encontrado; nenhum registro alterado.");

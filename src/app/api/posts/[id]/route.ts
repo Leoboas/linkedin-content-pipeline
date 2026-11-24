@@ -127,7 +127,7 @@ async function updatePost(request: Request, context: RouteContext): Promise<Next
       }
       return tx.post.update({ where: { id }, data: {
         ...data,
-        ...(textChanged || creativeChanged ? { status: PostStatus.DRAFT, qualityStatus: QualityGateStatus.NEEDS_REVISION, qualityScore: 0, approvedCreativeBriefId: null } : {}),
+        ...(textChanged || creativeChanged ? { status: PostStatus.DRAFT, qualityStatus: QualityGateStatus.NEEDS_REVISION, qualityScore: null, qualityReview: { evaluation: { status: "NOT_EVALUATED", method: null, invalidatedAt: new Date().toISOString(), reason: "Conteúdo ou direção visual foi alterado." } }, qualityReviewedAt: null, approvedCreativeBriefId: null } : {}),
       } });
     });
     return jsonResponse(updated);

@@ -1,7 +1,7 @@
 import type { EditorialPillar } from "@prisma/client";
 import { getAppUrl } from "@/lib/app-url";
 import { CREATIVE_DIRECTION_PROMPT, type VisualFormat, visualFormatForPost, visualFormatPrompt } from "../../config/creative-direction";
-import { toVisualBrief, type ContentBrief } from "@/lib/creative-brief";
+import { toVisualBrief, type ContentBrief, type VisualBrief } from "@/lib/creative-brief";
 
 const palette = ["#0F172A", "#0EA5E9", "#F59E0B"] as const;
 
@@ -17,7 +17,7 @@ export interface ImagePromptInput {
   projectEvidence?: string;
   contentBrief?: ContentBrief;
 }
-function extractVisualBrief(input: ImagePromptInput) {
+function extractVisualBrief(input: ImagePromptInput): VisualBrief {
   if (input.contentBrief) return toVisualBrief(input.contentBrief, input.visualBullets);
   const visualAnchors = (input.visualBullets ?? [])
     .map((bullet) => bullet.trim())
@@ -30,11 +30,12 @@ function extractVisualBrief(input: ImagePromptInput) {
     thesis: narrative,
     technicalConflict: "Tema técnico amplo sem conflito visual estruturado; evitar ilustração genérica.",
     visualConcept: `Representar visualmente o problema específico de ${subject}, mostrando causa e consequência em uma composição única.`,
-    narrative,
     visualAnchors,
     audience: input.editorialPillar
       ? `profissionais de tecnologia e engenharia no estágio ${input.editorialPillar}`
       : "profissionais seniores de tecnologia",
+    negativePrompt: "text, typography, letters, words, logo, watermark, invented architecture, generic technology stock art",
+    format: input.visualFormat ?? visualFormatForPost("SINGLE_IMAGE", input.editorialPillar),
   };
 }
 
@@ -47,6 +48,7 @@ function composeFluxPrompt(brief: ReturnType<typeof extractVisualBrief>, feedbac
     `Technical conflict to visualize: ${brief.technicalConflict}.`,
     `Specific visual concept: ${brief.visualConcept}.`,
     brief.visualAnchors.length > 0 ? `Visual anchors: ${brief.visualAnchors.join(", ")}.` : "",
+    brief.visualFlow ? `Programmatic diagram specification (preserve direction exactly): nodes ${brief.visualFlow.nodes.join(" → ")}; branches ${brief.visualFlow.edges.map((edge) => `${edge.from} → ${edge.to}${edge.label ? ` (${edge.label})` : ""}`).join("; ")}. Scope: ${brief.visualFlow.scopeNote}` : "",
     `Target audience: ${brief.audience}.`,
     projectEvidence?.trim() ? `Factual project evidence for visual direction (do not invent beyond it): ${projectEvidence.trim().slice(0, 1800)}.` : "",
     "Style: premium, minimal technical editorial design; use restrained depth and lighting only when they support the selected visual format and specific concept.",
@@ -77,8 +79,9 @@ export function wantsRealPhotography(prompt: string): boolean {
  * Zero-inference fallback. The endpoint uses @vercel/og/Satori to compose a
  * deterministic card, so it does not consume Hugging Face credits.
  */
-export async function generateImageZeroCost(topic: string, pillar: string, visualFormat: VisualFormat = visualFormatForPost("SINGLE_IMAGE", pillar)): Promise<Buffer> {
+export async function generateImageZeroCost(topic: string, pillar: string, visualFormat: VisualFormat = visualFormatForPost("SINGLE_IMAGE", pillar), visualFlow?: ContentBrief["visualFlow"]): Promise<Buffer> {
   const params = new URLSearchParams({ title: topic.slice(0, 95), pillar: pillar.slice(0, 40), format: visualFormat });
+  if (visualFlow) params.set("flow", JSON.stringify(visualFlow).slice(0, 1800));
   const response = await fetch(`${getAppUrl()}/api/og/creative?${params.toString()}`, {
     cache: "no-store",
     signal: AbortSignal.timeout(20_000),

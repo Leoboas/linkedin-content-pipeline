@@ -42,7 +42,7 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
       status: PostStatus.DRAFT,
       approvedCreativeBriefId: null,
       qualityStatus: visualPassed && post.qualityStatus === QualityGateStatus.PASS ? QualityGateStatus.PASS : QualityGateStatus.NEEDS_REVISION,
-      qualityScore: Math.min(post.qualityScore ?? 0, visualReview?.score ?? 0),
+      qualityScore: visualReview && post.qualityScore !== null ? Math.min(post.qualityScore, visualReview.score) : null,
       qualityReview: { ...oldReview, renderedImage: reviewSnapshot } as unknown as Prisma.InputJsonValue,
       qualityReviewedAt: new Date(),
     } });

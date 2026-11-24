@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { fetchStockImageUrl, generateImageZeroCost } from "@/lib/image-prompt-engine";
+import type { ContentBrief } from "@/lib/creative-brief";
 import { type VisualFormat, visualFormatForPost, visualFormatPrompt } from "../../config/creative-direction";
 
 const IMAGEN_MODEL = "imagen-3.0-generate-002";
@@ -114,7 +115,7 @@ async function generateWithGemini(prompt: string, visualFormat: VisualFormat): P
   return { buffer: Buffer.from(encoded, "base64"), contentType: "image/jpeg", provider: "gemini-imagen-3" };
 }
 
-async function generateFallback(topic: string, pillar: string, visualFormat: VisualFormat): Promise<PremiumImageResult> {
+async function generateFallback(topic: string, pillar: string, visualFormat: VisualFormat, visualFlow?: ContentBrief["visualFlow"]): Promise<PremiumImageResult> {
   const stockUrl = await fetchStockImageUrl(`${topic} technology enterprise architecture`);
   if (stockUrl) {
     const response = await fetch(stockUrl, { cache: "no-store", signal: AbortSignal.timeout(20_000) });
@@ -123,10 +124,10 @@ async function generateFallback(topic: string, pillar: string, visualFormat: Vis
       return { buffer: Buffer.from(await response.arrayBuffer()), contentType, provider: "unsplash" };
     }
   }
-  return { buffer: await generateImageZeroCost(topic, pillar, visualFormat), contentType: "image/png", provider: "satori" };
+  return { buffer: await generateImageZeroCost(topic, pillar, visualFormat, visualFlow), contentType: "image/png", provider: "satori" };
 }
 
-export async function generatePremiumPostImage(topic: string, pillar: string, additionalPrompt?: string, visualFormat: VisualFormat = visualFormatForPost("SINGLE_IMAGE", pillar)): Promise<PremiumImageResult> {
+export async function generatePremiumPostImage(topic: string, pillar: string, additionalPrompt?: string, visualFormat: VisualFormat = visualFormatForPost("SINGLE_IMAGE", pillar), visualFlow?: ContentBrief["visualFlow"]): Promise<PremiumImageResult> {
   const prompt = [
     refineImagePromptForLinkedIn(topic, pillar, visualFormat),
     additionalPrompt?.trim() ? `Additional art direction: ${additionalPrompt.trim().slice(0, 1_000)}` : "",
@@ -139,6 +140,6 @@ export async function generatePremiumPostImage(topic: string, pillar: string, ad
       pillar,
       error: error instanceof Error ? error.message : String(error),
     });
-    return generateFallback(topic, pillar, visualFormat);
+    return generateFallback(topic, pillar, visualFormat, visualFlow);
   }
 }

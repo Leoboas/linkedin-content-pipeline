@@ -32,7 +32,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     where: { status: { in: view === "backlog" ? backlogStatuses : activeStatuses } },
     orderBy: { scheduledFor: "asc" },
     take: 200,
-    include: { creativeBriefs: { orderBy: { createdAt: "desc" }, take: 1, select: { evidenceSnapshot: true } } },
+    include: { creativeBriefs: { orderBy: { createdAt: "desc" }, take: 1, select: { id: true, version: true, thesis: true, technicalConflict: true, concreteProblem: true, visualConcept: true, shortOverlayTitle: true, evidenceSnapshot: true, effectivePrompt: true, mediaUrl: true, aestheticScore: true, semanticScore: true, technicalScore: true, reviewStatus: true, reviewSnapshot: true, postVersionId: true, contentBrief: true, visualBrief: true } } },
   });
   return NextResponse.json(posts.map((post) => ({
     id: post.id,
@@ -54,5 +54,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     qualityStatus: post.qualityStatus,
     qualityReview: post.qualityReview,
     evidenceSnapshot: post.creativeBriefs[0]?.evidenceSnapshot ?? null,
+    creativeBrief: post.creativeBriefs[0] ?? null,
+    currentVersionId: post.currentVersionId,
   })));
 }

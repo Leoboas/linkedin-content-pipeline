@@ -2,7 +2,7 @@ import { loadConfirmedDevelopmentDatabase } from "./lib/confirmed-dev-database.t
 
 try {
   const target = loadConfirmedDevelopmentDatabase();
-  console.log("Alvo isolado confirmado (nenhuma conexão ou escrita realizada):", target);
+  console.log("Alvo isolado confirmado (nenhuma conexão ou escrita realizada):", { provider: target.provider, target: target.target });
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exitCode = 1;

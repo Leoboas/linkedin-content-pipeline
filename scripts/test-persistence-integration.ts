@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { loadConfirmedDevelopmentDatabase } from "./lib/confirmed-dev-database.ts";
+import { assertEmptyApplicationTables, assertOnlyDeterministicMigrationSeeds } from "./lib/isolated-db-assertions.ts";
 
 const rollbackMarker = "ROLLBACK_SYNTHETIC_PERSISTENCE_TEST";
 
@@ -10,6 +11,8 @@ async function main(): Promise<void> {
   const { PostStatus, QualityGateStatus } = await import("@prisma/client");
   const { getPublicationEligibility } = await import("../src/lib/publication-eligibility.ts");
   try {
+    await assertOnlyDeterministicMigrationSeeds(prisma);
+    await assertEmptyApplicationTables(prisma, { allowPopulatedTables: ["MonitoredCompany", "NetworkingTopic"] });
     await prisma.$transaction(async (tx) => {
       const key = randomUUID();
       const source = await tx.knowledgeSource.create({ data: {
@@ -88,13 +91,13 @@ async function main(): Promise<void> {
       assert.ok(invalidated);
       assert.equal(getPublicationEligibility(invalidated).eligible, false, "replacing media must invalidate the prior approval");
       throw new Error(rollbackMarker);
-    }, { timeout: 15000 });
+    }, { maxWait: 10000, timeout: 60000 });
   } catch (error) {
     if (!(error instanceof Error) || error.message !== rollbackMarker) throw error;
   } finally {
     await prisma.$disconnect();
   }
-  console.log("Synthetic relational integration assertions passed and were rolled back.", { projectId: target.projectId, branchId: target.branchId });
+  console.log("Synthetic relational integration assertions passed and were rolled back.", { provider: target.provider, target: target.target });
 }
 
 main().catch((error: unknown) => { console.error("Persistence integration test failed:", error); process.exitCode = 1; });

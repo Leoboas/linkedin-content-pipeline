@@ -25,6 +25,13 @@ export interface DashboardPost {
   qualityStatus?: string | null;
   qualityReview?: unknown;
   evidenceSnapshot?: unknown;
+  creativeBrief?: {
+    id: string; version: number; postVersionId: string | null; thesis: string; technicalConflict: string;
+    concreteProblem: string; visualConcept: string; shortOverlayTitle: string | null; effectivePrompt: string | null;
+    mediaUrl: string | null; aestheticScore: number | null; semanticScore: number | null; technicalScore: number | null;
+    reviewStatus: string | null; reviewSnapshot: unknown; contentBrief: unknown; visualBrief: unknown;
+  } | null;
+  currentVersionId?: string | null;
 }
 
 export interface DashboardReference {
@@ -56,6 +63,47 @@ function isExpired(post: DashboardPost): boolean {
 
 function objectValue(value: unknown): Record<string, unknown> | null {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : null;
+}
+
+function scoreLabel(value: unknown, suffix = "/100"): string {
+  return typeof value === "number" && Number.isFinite(value) ? `${value}${suffix}` : "Não disponível";
+}
+
+function EvaluationDetails({ post, busy, onReevaluate }: { post: DashboardPost; busy: boolean; onReevaluate: (post: DashboardPost) => void }) {
+  const review = objectValue(post.qualityReview);
+  const evaluation = objectValue(review?.evaluation);
+  const intel = objectValue(review?.editorialIntelligence);
+  const career = objectValue(intel?.careerRelevance);
+  const hook = objectValue(intel?.hookQuality);
+  const claims = objectValue(review?.claims);
+  const dimensions = objectValue(review?.dimensions);
+  const status = typeof evaluation?.status === "string" ? evaluation.status : post.qualityStatus ? "COMPLETED" : "NOT_EVALUATED";
+  const evidence = Array.isArray(post.evidenceSnapshot) ? post.evidenceSnapshot : [];
+  const strings = (value: unknown) => Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  const creative = post.creativeBrief;
+  const currentCreative = Boolean(creative && (!post.currentVersionId || creative.postVersionId === post.currentVersionId));
+
+  return <details className="editorial-score-details">
+    <summary>Avaliação editorial detalhada · {status === "NOT_EVALUATED" ? "Não avaliado" : status === "RUNNING" ? "Avaliando" : status === "FAILED" ? "Falha na avaliação" : post.qualityStatus ?? status}</summary>
+    <div className="admin-actions"><span className="admin-status">Quality Gate: {post.qualityStatus ?? "Não avaliado"}</span><span className="admin-status">Score: {scoreLabel(post.qualityScore)}</span><span className="admin-status">Avaliador: {typeof evaluation?.method === "string" ? evaluation.method : "Não executado"}</span><button className="admin-button" disabled={busy} onClick={() => onReevaluate(post)}>{busy ? "Avaliando…" : "Reavaliar este conteúdo"}</button></div>
+    {typeof evaluation?.error === "string" && <p className="admin-error">{evaluation.error}</p>}
+    <div className="editorial-review-summary"><span>Career Relevance {scoreLabel(career?.score, "/5")}</span><span>Hook Quality {scoreLabel(hook?.score)}</span><span>Versão {typeof evaluation?.contentVersionId === "string" ? evaluation.contentVersionId : "sem snapshot de versão"}</span><span>Duração {typeof evaluation?.elapsedMs === "number" ? `${evaluation.elapsedMs} ms` : "n/d"}</span></div>
+    <h4>Career Relevance</h4><p>{strings(career?.rationale).join(" ") || "Não avaliado."}</p><pre>{JSON.stringify(career?.breakdown ?? null, null, 2)}</pre>
+    <h4>Hook Quality</h4><p>{strings(hook?.rationale).join(" ") || "Não avaliado."}</p><pre>{JSON.stringify(hook?.breakdown ?? null, null, 2)}</pre>
+    <h4>Evidence Gate</h4><p>Resultado: {claims?.blocked === true ? "BLOCKED" : claims ? "Verificado" : "Não disponível"}. Fontes: {strings(claims?.evidenceSources).join(", ") || "não registradas"}</p>
+    {strings(claims?.supportedClaims).length > 0 && <p><strong>Afirmações sustentadas:</strong> {strings(claims?.supportedClaims).join(" · ")}</p>}
+    {strings(claims?.unsupportedClaims).length > 0 && <p className="admin-error"><strong>Não comprovadas:</strong> {strings(claims?.unsupportedClaims).join(" · ")}</p>}
+    {evidence.length > 0 && <ul>{evidence.map((item, index) => { const row = objectValue(item); return <li key={index}><strong>{String(row?.claimClassification ?? row?.kind ?? "Evidência")}:</strong> {String(row?.claim ?? "")} {row?.source ? `(fonte: ${String(row.source)})` : ""}</li>; })}</ul>}
+    <h4>Quality Gate e recomendações</h4><p>{typeof review?.summary === "string" ? review.summary : "Avaliação não executada."}</p><pre>{JSON.stringify(dimensions ?? null, null, 2)}</pre>
+    {strings(review?.textIssues).length + strings(review?.visualIssues).length > 0 && <ul>{[...strings(review?.textIssues), ...strings(review?.visualIssues)].map((issue, index) => <li key={index}>{issue}</li>)}</ul>}
+    {strings(review?.recommendations).length > 0 && <p><strong>Ajustes sugeridos:</strong> {strings(review?.recommendations).join(" · ")}</p>}
+    <h4>Creative Brief {creative ? `v${creative.version}` : ""}</h4>
+    {!creative || !currentCreative ? <p>Briefing ausente ou não associado à versão avaliada; não será apresentado como atual.</p> : <>
+      <p><strong>Tese:</strong> {creative.thesis}<br/><strong>Conflito:</strong> {creative.technicalConflict}<br/><strong>Problema:</strong> {creative.concreteProblem}<br/><strong>Conceito visual:</strong> {creative.visualConcept}<br/><strong>Headline:</strong> {creative.shortOverlayTitle ?? "Não definida"}</p>
+      <p>Imagem: estética {scoreLabel(creative.aestheticScore)} · aderência {scoreLabel(creative.semanticScore)} · precisão técnica {scoreLabel(creative.technicalScore)} · status {creative.reviewStatus ?? "Não avaliada"}</p>
+      <details><summary>VisualBrief, prompt efetivo e snapshot da revisão</summary><pre>{JSON.stringify({ visualBrief: creative.visualBrief, prompt: creative.effectivePrompt, review: creative.reviewSnapshot }, null, 2)}</pre></details>
+    </>}
+  </details>;
 }
 
 function editorialMeta(post: DashboardPost): { theme: string; career: string; hook: string; visualFormat: string; careerRationale: string[]; hookRationale: string[]; breakdown: string; claims: string[] } {
@@ -112,6 +160,7 @@ export function AdminDashboard({
   const [studioPostId, setStudioPostId] = useState("");
   const [creativePackage, setCreativePackage] = useState<CreativePackage | null>(null);
   const [loadingCreativePackage, setLoadingCreativePackage] = useState(false);
+  const [reviewingPostId, setReviewingPostId] = useState<string | null>(null);
 
   const visiblePosts = useMemo(() => posts.filter((post) => (showBacklog ? backlogStatuses : activeStatuses).has(post.status)), [posts, showBacklog]);
   const monthCells = useMemo(() => {
@@ -192,6 +241,19 @@ export function AdminDashboard({
       }
     }
     notify("A reformulação ainda está processando. Atualize a página em alguns segundos.");
+  }
+
+  async function reevaluatePost(post: DashboardPost) {
+    setReviewingPostId(post.id);
+    try {
+      const response = await fetch(`/api/posts/${post.id}/review`, { method: "POST", headers: authHeaders() });
+      const payload = await response.json() as { error?: string; post?: Partial<DashboardPost> };
+      if (!response.ok) throw new Error(payload.error ?? `Falha na reavaliação (${response.status}).`);
+      setPosts((current) => current.map((item) => item.id === post.id ? { ...item, ...payload.post } : item));
+      notify("Avaliação atualizada para a versão atual. O post continua sem aprovação automática.");
+    } catch (error) {
+      notify(error instanceof Error ? error.message : "Não foi possível reavaliar o conteúdo.", "error");
+    } finally { setReviewingPostId(null); }
   }
 
   async function regenerate(post: DashboardPost) {
@@ -396,6 +458,7 @@ export function AdminDashboard({
         <div className="editorial-review-summary"><span>{post.language === "en-US" ? "EN" : "PT-BR"}</span><span>{editorialMeta(post).theme}</span><span>{post.editorialObjective ?? "Objetivo pendente"}</span><span>Carreira {editorialMeta(post).career}</span><span>Hook {editorialMeta(post).hook}</span><span>{editorialMeta(post).visualFormat}</span><span>{post.formatType ?? "formato pendente"}</span><span>Quality {post.qualityStatus ?? "pending"}{post.qualityScore === null || post.qualityScore === undefined ? "" : ` · ${post.qualityScore}/100`}</span></div>
         {editorialMeta(post).claims.length > 0 && <div className="admin-meta"><strong>Evidências:</strong> {editorialMeta(post).claims.join(" · ")}</div>}
         {(editorialMeta(post).careerRationale.length > 0 || editorialMeta(post).hookRationale.length > 0) && <details className="editorial-score-details"><summary>Ver justificativa dos scores</summary><p><strong>Career Relevance:</strong> {editorialMeta(post).careerRationale.join(" ")}</p><p><strong>Hook Quality:</strong> {editorialMeta(post).hookRationale.join(" ")}</p><pre>{editorialMeta(post).breakdown}</pre></details>}
+        <EvaluationDetails post={post} busy={reviewingPostId === post.id} onReevaluate={reevaluatePost} />
         {isExpired(post) && <div className="admin-expired">⚠️ Data expirada — reagende ou cancele este post.</div>}
         {post.mediaUrl && <div className="admin-media">{post.mediaUrl.toLowerCase().includes(".pdf") ? <a href={post.mediaUrl} target="_blank" rel="noreferrer">📄 Abrir PDF do carrossel</a> : <img src={post.mediaUrl} alt={`Criativo de ${post.title}`} loading="lazy" />}</div>}
         {post.status !== "PUBLISHED" && post.status !== "CANCELLED" && <label className="admin-button">🖼️ Substituir imagem<input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadMedia(post, file); event.currentTarget.value = ""; }} /></label>}
