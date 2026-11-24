@@ -8,6 +8,7 @@ import { asStringArray, buildCareerContext, calculateMatch, tokenize } from "@/l
 import { extractSkillsFromText, normalizeSkills } from "@/lib/skills-normalizer";
 import { assessJobEligibility, fetchCareerSources, isRelevantEngineeringJob, jobDeduplicationKey, normalizeCountryCode, type CareerSourceKey, type CareerSourceMode } from "@/lib/job-source-connectors";
 import { recommendAuthorizedResume } from "../../config/authorized-resumes";
+import { isCandidateResumeKey, resumeMatchesBaseKey } from "@/lib/authorized-resume-versioning";
 
 export interface CareerJobPreview {
   id: string;
@@ -251,8 +252,7 @@ export async function runCareerScan(existingRunId?: string, options?: { maxJobs?
     const employerMarkets = asStringArray(preferences?.employerMarkets);
     const maxJobs = Math.max(1, Math.min(150, Math.floor(options?.maxJobs ?? 150)));
     const search = await searchJobs(sourceKeys, maxJobs);
-    const resumeKeys = new Set(["data-engineering-pt-br-v2", "data-engineering-en-v2", "python-backend-en-v2", "python-backend-pt-br-v2"]);
-    const authorizedResumes = await prisma.authorizedResume.findMany({ where: { profileId: profile.id, resumeKey: { in: [...resumeKeys] } }, select: { id: true, resumeKey: true, originalName: true, sha256: true, version: true } });
+    const authorizedResumes = (await prisma.authorizedResume.findMany({ where: { profileId: profile.id }, select: { id: true, resumeKey: true, originalName: true, sha256: true, version: true, profileType: true, language: true, updatedAt: true }, orderBy: { updatedAt: "desc" } })).filter((resume) => isCandidateResumeKey(resume.resumeKey));
     const matches: CareerJobPreview[] = [];
     const persistedBySource = new Map<string, number>();
 
@@ -260,7 +260,7 @@ export async function runCareerScan(existingRunId?: string, options?: { maxJobs?
       const eligibility = assessJobEligibility({ ...input, location: input.location ?? null, remote: input.remote === true, description: input.description ?? "" }, locations);
       if (preferences?.remoteOnly && !input.remote) continue;
       const resumeRecommendation = recommendAuthorizedResume({ title: input.title, description: input.description ?? "", languageHint: /portugu[eê]s|brazil|brasil/i.test(`${input.title} ${input.location ?? ""} ${input.description ?? ""}`) ? "PT_BR" : "EN" });
-      const availableResume = resumeRecommendation ? authorizedResumes.find((resume) => resume.resumeKey === resumeRecommendation.resumeKey) : undefined;
+      const availableResume = resumeRecommendation ? authorizedResumes.find((resume) => resumeMatchesBaseKey(resume.resumeKey, resumeRecommendation.resumeKey)) : undefined;
       const country = input.employerCountry?.toUpperCase() ?? null;
       const employerMarket = country === "US" ? "US" : country && ["GB", "DE", "FR", "ES", "IT", "NL", "PT", "IE", "SE", "NO", "FI", "DK", "BE", "CH", "AT", "PL"].includes(country) ? "EU" : "UNKNOWN";
       // Most feeds expose job location, not employer headquarters; keep unknown-market jobs visible for review.

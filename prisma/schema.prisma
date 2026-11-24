@@ -95,9 +95,42 @@ enum JobApplicationStatus {
   READY_FOR_REVIEW
   RESUME_PREPARED
   APPLIED
+  SCREENING
   INTERVIEW
+  TECHNICAL_TEST
+  OFFER
   REJECTED
   WITHDRAWN
+  ARCHIVED
+}
+
+enum ApplicationPreparationStatus {
+  NOT_QUEUED
+  QUEUED
+  PREPARING
+  NEEDS_INFORMATION
+  READY_FOR_REVIEW
+  APPROVED_FOR_SUBMISSION
+  SUBMITTING
+  SUBMISSION_FAILED
+  MANUAL_ACTION_REQUIRED
+}
+
+enum ApplicationKitReviewStatus {
+  NEEDS_REVIEW
+  NEEDS_INFORMATION
+  APPROVED
+  REJECTED
+}
+
+enum JobApplicationEventType {
+  PREPARATION_STATUS_CHANGED
+  RECRUITMENT_STATUS_CHANGED
+  KIT_CREATED
+  KIT_APPROVED
+  NOTE_ADDED
+  RECRUITER_CONTACT_RECORDED
+  INTERVIEW_RECORDED
 }
 
 enum KnowledgeSourceType {
@@ -461,23 +494,23 @@ model KnowledgeImportRun {
 }
 
 model Post {
-  id                      String              @id @default(uuid()) @db.Uuid
-  generationKey           String?             @unique
-  editorialLineId         String?             @db.Uuid
-  editorialPillar         EditorialPillar     @default(TOFU)
+  id                      String                       @id @default(uuid()) @db.Uuid
+  generationKey           String?                      @unique
+  editorialLineId         String?                      @db.Uuid
+  editorialPillar         EditorialPillar              @default(TOFU)
   funnelStage             FunnelStage
   formatType              FormatType
-  language                String              @default("pt-BR")
-  editorialObjective      String?             @db.Text
+  language                String                       @default("pt-BR")
+  editorialObjective      String?                      @db.Text
   associatedProject       String?
   topic                   String?
-  mediaError              String?             @db.Text
+  mediaError              String?                      @db.Text
   title                   String
-  textContent             String              @db.Text
-  imagePrompt             String?             @db.Text
+  textContent             String                       @db.Text
+  imagePrompt             String?                      @db.Text
   slidesJson              Json?
   mediaUrl                String?
-  status                  PostStatus          @default(PENDING)
+  status                  PostStatus                   @default(PENDING)
   scheduledFor            DateTime
   scheduledDate           DateTime?
   publishedAt             DateTime?
@@ -488,20 +521,20 @@ model Post {
   qualityStatus           QualityGateStatus?
   qualityReview           Json?
   qualityReviewedAt       DateTime?
-  feedbackText            String?             @db.Text
-  rejectionFeedback       String?             @db.Text
-  createdAt               DateTime            @default(now())
-  updatedAt               DateTime            @updatedAt
-  editorialLine           EditorialLine?      @relation(fields: [editorialLineId], references: [id], onDelete: SetNull)
+  feedbackText            String?                      @db.Text
+  rejectionFeedback       String?                      @db.Text
+  createdAt               DateTime                     @default(now())
+  updatedAt               DateTime                     @updatedAt
+  editorialLine           EditorialLine?               @relation(fields: [editorialLineId], references: [id], onDelete: SetNull)
   metrics                 PostMetric[]
   analyticsAttempts       AnalyticsCollectionAttempt[]
-  versions                PostVersion[]       @relation("PostVersions")
-  creativeBriefs          CreativeBrief[]     @relation("PostCreativeBriefs")
+  versions                PostVersion[]                @relation("PostVersions")
+  creativeBriefs          CreativeBrief[]              @relation("PostCreativeBriefs")
   projectLinks            PostProject[]
-  currentVersionId        String?             @db.Uuid
-  currentVersion          PostVersion?        @relation("PostCurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
-  approvedCreativeBriefId String?             @db.Uuid
-  approvedCreativeBrief   CreativeBrief?      @relation("CurrentPostApproval", fields: [approvedCreativeBriefId], references: [id], onDelete: SetNull)
+  currentVersionId        String?                      @db.Uuid
+  currentVersion          PostVersion?                 @relation("PostCurrentVersion", fields: [currentVersionId], references: [id], onDelete: SetNull)
+  approvedCreativeBriefId String?                      @db.Uuid
+  approvedCreativeBrief   CreativeBrief?               @relation("CurrentPostApproval", fields: [approvedCreativeBriefId], references: [id], onDelete: SetNull)
   approvalEvents          PostApprovalEvent[]
   experimentLinks         EditorialExperimentPost[]
   careerOutcomes          CareerOutcome[]
@@ -671,8 +704,8 @@ model PostApprovalEvent {
 }
 
 model PostMetric {
-  id                      String    @id @default(uuid()) @db.Uuid
-  postId                  String    @db.Uuid
+  id                      String                @id @default(uuid()) @db.Uuid
+  postId                  String                @db.Uuid
   linkedinPostId          String?
   impressions             Int?
   membersReached          Int?
@@ -693,19 +726,19 @@ model PostMetric {
   audienceBreakdown       Json?
   engagementScore         Float?
   interactionRate         Float?
-  source                  String    @default("LEGACY")
+  source                  String                @default("LEGACY")
   apiVersion              String?
-  measurementWindow       String    @default("LIFETIME")
-  availability            String    @default("UNKNOWN")
+  measurementWindow       String                @default("LIFETIME")
+  availability            String                @default("UNKNOWN")
   publishedAtSnapshot     DateTime?
   exposureHours           Float?
   latenessHours           Float?
-  sourceNote              String?   @db.Text
-  importBatchId           String?   @db.Uuid
+  sourceNote              String?               @db.Text
+  importBatchId           String?               @db.Uuid
   importRowNumber         Int?
-  idempotencyKey          String?   @unique
-  capturedAt              DateTime  @default(now())
-  post                    Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
+  idempotencyKey          String?               @unique
+  capturedAt              DateTime              @default(now())
+  post                    Post                  @relation(fields: [postId], references: [id], onDelete: Cascade)
   importBatch             AnalyticsImportBatch? @relation(fields: [importBatchId], references: [id], onDelete: SetNull)
 
   @@index([postId, capturedAt])
@@ -728,23 +761,23 @@ model EditorialLearningCycle {
 }
 
 model EditorialExperiment {
-  id                    String                   @id @default(uuid()) @db.Uuid
+  id                    String                          @id @default(uuid()) @db.Uuid
   name                  String
-  hypothesis            String                   @db.Text
-  professionalObjective String                   @db.Text
+  hypothesis            String                          @db.Text
+  professionalObjective String                          @db.Text
   primaryMetric         String
-  secondaryMetrics      Json                     @default("[]")
+  secondaryMetrics      Json                            @default("[]")
   variableTested        String
   periodStart           DateTime
   periodEnd             DateTime
-  comparisonCriteria    Json                     @default("{}")
-  minimumObservations   Int                      @default(4)
-  status                EditorialExperimentStatus @default(PLANNED)
+  comparisonCriteria    Json                            @default("{}")
+  minimumObservations   Int                             @default(4)
+  status                EditorialExperimentStatus       @default(PLANNED)
   results               Json?
   limitations           Json?
-  recommendation        String?                  @db.Text
-  createdAt             DateTime                 @default(now())
-  updatedAt             DateTime                 @default(now()) @updatedAt
+  recommendation        String?                         @db.Text
+  createdAt             DateTime                        @default(now())
+  updatedAt             DateTime                        @default(now()) @updatedAt
   posts                 EditorialExperimentPost[]
   evaluations           EditorialExperimentEvaluation[]
 
@@ -759,7 +792,7 @@ model EditorialExperimentEvaluation {
   metric            String
   dataFingerprint   String
   results           Json
-  observedAt        DateTime             @default(now())
+  observedAt        DateTime            @default(now())
   experiment        EditorialExperiment @relation(fields: [experimentId], references: [id], onDelete: Cascade)
 
   @@unique([experimentId, dataFingerprint])
@@ -780,24 +813,24 @@ model EditorialExperimentPost {
 }
 
 model EditorialRecommendation {
-  id              String                        @id @default(uuid()) @db.Uuid
-  recommendationKey String                      @unique
-  title           String
-  diagnosis       String                        @db.Text
-  dataSnapshot   Json
-  periodStart     DateTime
-  periodEnd       DateTime
-  sampleSize      Int                           @default(0)
-  hypothesis      String                        @db.Text
-  justification   String                        @db.Text
-  confidence      String                        @default("LOW")
-  nextAction      String                        @db.Text
-  limitations     Json
-  status          EditorialRecommendationStatus @default(SUGGESTED)
-  decisionNote    String?                       @db.Text
-  decidedAt       DateTime?
-  createdAt       DateTime                      @default(now())
-  updatedAt       DateTime                      @default(now()) @updatedAt
+  id                String                        @id @default(uuid()) @db.Uuid
+  recommendationKey String                        @unique
+  title             String
+  diagnosis         String                        @db.Text
+  dataSnapshot      Json
+  periodStart       DateTime
+  periodEnd         DateTime
+  sampleSize        Int                           @default(0)
+  hypothesis        String                        @db.Text
+  justification     String                        @db.Text
+  confidence        String                        @default("LOW")
+  nextAction        String                        @db.Text
+  limitations       Json
+  status            EditorialRecommendationStatus @default(SUGGESTED)
+  decisionNote      String?                       @db.Text
+  decidedAt         DateTime?
+  createdAt         DateTime                      @default(now())
+  updatedAt         DateTime                      @default(now()) @updatedAt
 
   @@index([status, createdAt])
   @@index([periodStart, periodEnd])
@@ -813,29 +846,29 @@ model QualifiedAudienceCriteria {
 }
 
 model CareerOutcome {
-  id                    String                    @id @default(uuid()) @db.Uuid
-  company               String?
-  contactName           String?
-  contactRole           String?
-  roleTitle             String?
-  market                String?
-  occurredAt            DateTime
-  type                  CareerOutcomeType
-  origin                CareerOutcomeOrigin       @default(UNKNOWN)
-  association           CareerOutcomeAssociation  @default(UNLINKED)
-  postId                String?                   @db.Uuid
-  networkingActivityId  String?                   @db.Uuid
-  jobApplicationId      String?                   @db.Uuid
-  processStage          CareerOutcomeStage        @default(UNKNOWN)
-  observation           String?                   @db.Text
-  result                String?                   @db.Text
-  evidenceNote          String?                   @db.Text
-  idempotencyKey        String?                   @unique
-  createdAt             DateTime                  @default(now())
-  updatedAt             DateTime                  @default(now()) @updatedAt
-  post                  Post?                     @relation(fields: [postId], references: [id], onDelete: SetNull)
-  networkingActivity    NetworkingActivity?       @relation(fields: [networkingActivityId], references: [id], onDelete: SetNull)
-  jobApplication        JobApplication?           @relation(fields: [jobApplicationId], references: [id], onDelete: SetNull)
+  id                   String                   @id @default(uuid()) @db.Uuid
+  company              String?
+  contactName          String?
+  contactRole          String?
+  roleTitle            String?
+  market               String?
+  occurredAt           DateTime
+  type                 CareerOutcomeType
+  origin               CareerOutcomeOrigin      @default(UNKNOWN)
+  association          CareerOutcomeAssociation @default(UNLINKED)
+  postId               String?                  @db.Uuid
+  networkingActivityId String?                  @db.Uuid
+  jobApplicationId     String?                  @db.Uuid
+  processStage         CareerOutcomeStage       @default(UNKNOWN)
+  observation          String?                  @db.Text
+  result               String?                  @db.Text
+  evidenceNote         String?                  @db.Text
+  idempotencyKey       String?                  @unique
+  createdAt            DateTime                 @default(now())
+  updatedAt            DateTime                 @default(now()) @updatedAt
+  post                 Post?                    @relation(fields: [postId], references: [id], onDelete: SetNull)
+  networkingActivity   NetworkingActivity?      @relation(fields: [networkingActivityId], references: [id], onDelete: SetNull)
+  jobApplication       JobApplication?          @relation(fields: [jobApplicationId], references: [id], onDelete: SetNull)
 
   @@index([occurredAt, type])
   @@index([origin, association])
@@ -846,39 +879,39 @@ model CareerOutcome {
 }
 
 model AnalyticsImportBatch {
-  id                String       @id @default(uuid()) @db.Uuid
-  fileName          String       @db.Text
-  fileSha256        String       @unique
-  sourceLabel       String       @db.Text
-  status            String       @default("COMPLETED")
-  columnMapping     Json
-  mappingHistory    Json?
-  rowsSeen          Int          @default(0)
-  rowsImported      Int          @default(0)
-  rowsUnmatched     Int          @default(0)
-  errors            Json?
-  aggregateRows     Json?
-  capturedAt        DateTime     @default(now())
-  createdAt         DateTime     @default(now())
-  metrics           PostMetric[]
+  id             String       @id @default(uuid()) @db.Uuid
+  fileName       String       @db.Text
+  fileSha256     String       @unique
+  sourceLabel    String       @db.Text
+  status         String       @default("COMPLETED")
+  columnMapping  Json
+  mappingHistory Json?
+  rowsSeen       Int          @default(0)
+  rowsImported   Int          @default(0)
+  rowsUnmatched  Int          @default(0)
+  errors         Json?
+  aggregateRows  Json?
+  capturedAt     DateTime     @default(now())
+  createdAt      DateTime     @default(now())
+  metrics        PostMetric[]
 
   @@index([capturedAt])
   @@index([status, createdAt])
 }
 
 model AnalyticsCollectionAttempt {
-  id                  String   @id @default(uuid()) @db.Uuid
-  postId              String   @db.Uuid
-  linkedinPostId      String?
-  source              String   @default("LINKEDIN_API")
-  measurementWindow   String
-  state               String
-  apiVersion          String?
-  estimatedApiCalls   Int      @default(0)
-  errorCategory       String?
-  requestedAt         DateTime @default(now())
-  finishedAt          DateTime?
-  post                Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  id                String    @id @default(uuid()) @db.Uuid
+  postId            String    @db.Uuid
+  linkedinPostId    String?
+  source            String    @default("LINKEDIN_API")
+  measurementWindow String
+  state             String
+  apiVersion        String?
+  estimatedApiCalls Int       @default(0)
+  errorCategory     String?
+  requestedAt       DateTime  @default(now())
+  finishedAt        DateTime?
+  post              Post      @relation(fields: [postId], references: [id], onDelete: Cascade)
 
   @@index([postId, measurementWindow, requestedAt], map: "AnalyticsCollectionAttempt_postId_measurementWindow_requestedAt")
   @@index([state, requestedAt])
@@ -991,13 +1024,13 @@ model NetworkingCommentDraft {
 }
 
 model NetworkingAiAttempt {
-  id          String                    @id @default(uuid()) @db.Uuid
-  referenceId String                    @db.Uuid
-  status      NetworkingAiAttemptStatus @default(STARTED)
+  id            String                    @id @default(uuid()) @db.Uuid
+  referenceId   String                    @db.Uuid
+  status        NetworkingAiAttemptStatus @default(STARTED)
   errorCategory String?
-  createdAt   DateTime                  @default(now())
-  finishedAt  DateTime?
-  reference   NetworkingReference       @relation(fields: [referenceId], references: [id], onDelete: Cascade)
+  createdAt     DateTime                  @default(now())
+  finishedAt    DateTime?
+  reference     NetworkingReference       @relation(fields: [referenceId], references: [id], onDelete: Cascade)
 
   @@index([createdAt, status])
   @@index([referenceId, createdAt])
@@ -1039,19 +1072,19 @@ model NetworkingRoutine {
 }
 
 model NetworkingTarget {
-  id                 String                @id @default(uuid()) @db.Uuid
-  targetKey          String                @unique
+  id                 String               @id @default(uuid()) @db.Uuid
+  targetKey          String               @unique
   type               NetworkingTargetType
   name               String
   role               String?
   companyName        String?
   region             String?
-  linkedinUrl        String?               @unique
-  monitoredCompanyId String?               @db.Uuid
-  notes              String?               @db.Text
-  createdAt          DateTime              @default(now())
-  updatedAt          DateTime              @updatedAt
-  monitoredCompany   MonitoredCompany?     @relation(fields: [monitoredCompanyId], references: [id], onDelete: SetNull)
+  linkedinUrl        String?              @unique
+  monitoredCompanyId String?              @db.Uuid
+  notes              String?              @db.Text
+  createdAt          DateTime             @default(now())
+  updatedAt          DateTime             @updatedAt
+  monitoredCompany   MonitoredCompany?    @relation(fields: [monitoredCompanyId], references: [id], onDelete: SetNull)
 
   @@index([type, companyName])
   @@index([monitoredCompanyId])
@@ -1095,16 +1128,16 @@ model JobSearchPreference {
 }
 
 model MonitoredCompany {
-  id         String   @id @default(uuid()) @db.Uuid
-  companyKey String   @unique
-  name       String
-  careersUrl String
-  atsType    String
-  boardSlug  String
-  priority   Int      @default(100)
-  active     Boolean  @default(true)
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  id                String             @id @default(uuid()) @db.Uuid
+  companyKey        String             @unique
+  name              String
+  careersUrl        String
+  atsType           String
+  boardSlug         String
+  priority          Int                @default(100)
+  active            Boolean            @default(true)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
   networkingTargets NetworkingTarget[]
 
   @@index([active, priority])
@@ -1124,21 +1157,22 @@ model CareerDocument {
 }
 
 model ResumeDraft {
-  id             String            @id @default(uuid()) @db.Uuid
-  profileId      String            @db.Uuid
-  sourceJobId    String?           @db.Uuid
-  targetRole     String
-  template       String
-  jobDescription String?           @db.Text
-  content        Json
-  atsScore       Float             @default(0)
-  validation     Json?
-  status         ResumeDraftStatus @default(DRAFT)
-  createdAt      DateTime          @default(now())
-  updatedAt      DateTime          @updatedAt
-  profile        CandidateProfile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
-  sourceJob      JobListing?       @relation(fields: [sourceJobId], references: [id], onDelete: SetNull)
-  applications   JobApplication[]
+  id              String            @id @default(uuid()) @db.Uuid
+  profileId       String            @db.Uuid
+  sourceJobId     String?           @db.Uuid
+  targetRole      String
+  template        String
+  jobDescription  String?           @db.Text
+  content         Json
+  atsScore        Float             @default(0)
+  validation      Json?
+  status          ResumeDraftStatus @default(DRAFT)
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+  profile         CandidateProfile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  sourceJob       JobListing?       @relation(fields: [sourceJobId], references: [id], onDelete: SetNull)
+  applications    JobApplication[]
+  applicationKits ApplicationKit[]
 
   @@index([profileId, updatedAt])
   @@index([targetRole, atsScore])
@@ -1168,27 +1202,78 @@ model JobListing {
 }
 
 model JobApplication {
-  id                   String               @id @default(uuid()) @db.Uuid
-  profileId            String               @db.Uuid
-  jobId                String               @db.Uuid
-  resumeDraftId        String?              @db.Uuid
-  authorizedResumeId   String?              @db.Uuid
-  status               JobApplicationStatus @default(SAVED)
-  notes                String?              @db.Text
+  id                   String                       @id @default(uuid()) @db.Uuid
+  profileId            String                       @db.Uuid
+  jobId                String                       @db.Uuid
+  resumeDraftId        String?                      @db.Uuid
+  authorizedResumeId   String?                      @db.Uuid
+  status               JobApplicationStatus         @default(SAVED)
+  preparationStatus    ApplicationPreparationStatus @default(NOT_QUEUED)
+  preparationAttempt   Int                          @default(0)
+  notes                String?                      @db.Text
+  recruiterContact     String?                      @db.Text
   appliedAt            DateTime?
-  submissionEvidence   String?              @db.Text
+  submissionEvidence   String?                      @db.Text
   submissionEvidenceAt DateTime?
-  createdAt            DateTime             @default(now())
-  updatedAt            DateTime             @updatedAt
-  profile              CandidateProfile     @relation(fields: [profileId], references: [id], onDelete: Cascade)
-  job                  JobListing           @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  resumeDraft          ResumeDraft?         @relation(fields: [resumeDraftId], references: [id], onDelete: SetNull)
-  authorizedResume     AuthorizedResume?    @relation(fields: [authorizedResumeId], references: [id], onDelete: SetNull)
+  createdAt            DateTime                     @default(now())
+  updatedAt            DateTime                     @updatedAt
+  profile              CandidateProfile             @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  job                  JobListing                   @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  resumeDraft          ResumeDraft?                 @relation(fields: [resumeDraftId], references: [id], onDelete: SetNull)
+  authorizedResume     AuthorizedResume?            @relation(fields: [authorizedResumeId], references: [id], onDelete: SetNull)
   careerOutcomes       CareerOutcome[]
+  events               JobApplicationEvent[]
+  kits                 ApplicationKit[]
 
   @@unique([profileId, jobId])
   @@index([profileId, status, updatedAt])
   @@index([jobId, status])
+}
+
+model JobApplicationEvent {
+  id                   String                  @id @default(uuid()) @db.Uuid
+  applicationId        String                  @db.Uuid
+  eventType            JobApplicationEventType
+  fromRecruitmentStage String?
+  toRecruitmentStage   String?
+  fromPreparationStage String?
+  toPreparationStage   String?
+  source               String                  @default("USER")
+  note                 String?                 @db.Text
+  details              Json?
+  idempotencyKey       String?                 @unique
+  createdAt            DateTime                @default(now())
+  application          JobApplication          @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId, createdAt])
+  @@index([eventType, createdAt])
+}
+
+model ApplicationKit {
+  id                     String                     @id @default(uuid()) @db.Uuid
+  applicationId          String                     @db.Uuid
+  requestKey             String                     @unique
+  version                Int
+  baseResumeId           String?                    @db.Uuid
+  resumeDraftId          String?                    @db.Uuid
+  language               AuthorizedResumeLanguage
+  tailoredResume         Json
+  coverLetter            String                     @db.Text
+  knownAnswers           Json                       @default("{}")
+  unverifiedRequirements Json                       @default("[]")
+  requiredConfirmations  Json                       @default("[]")
+  submissionChecklist    Json                       @default("[]")
+  reviewStatus           ApplicationKitReviewStatus @default(NEEDS_REVIEW)
+  documentSha256         String?
+  createdAt              DateTime                   @default(now())
+  updatedAt              DateTime                   @updatedAt
+  application            JobApplication             @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  baseResume             AuthorizedResume?          @relation(fields: [baseResumeId], references: [id], onDelete: SetNull)
+  resumeDraft            ResumeDraft?               @relation(fields: [resumeDraftId], references: [id], onDelete: SetNull)
+
+  @@unique([applicationId, version])
+  @@index([applicationId, createdAt])
+  @@index([reviewStatus, createdAt])
 }
 
 model JobMatch {
@@ -1265,23 +1350,24 @@ model CareerSearchRun {
 }
 
 model AuthorizedResume {
-  id           String                   @id @default(uuid()) @db.Uuid
-  profileId    String                   @db.Uuid
-  resumeKey    String                   @unique
-  originalName String
-  profileType  AuthorizedResumeProfile
-  language     AuthorizedResumeLanguage
-  version      String
-  sha256       String
-  contentType  String
-  byteSize     Int
-  fileData     Bytes                    @db.ByteA
-  authorizedAt DateTime                 @default(now())
-  createdAt    DateTime                 @default(now())
-  updatedAt    DateTime                 @updatedAt
-  profile      CandidateProfile         @relation(fields: [profileId], references: [id], onDelete: Cascade)
-  matches      JobMatch[]
-  applications JobApplication[]
+  id              String                   @id @default(uuid()) @db.Uuid
+  profileId       String                   @db.Uuid
+  resumeKey       String                   @unique
+  originalName    String
+  profileType     AuthorizedResumeProfile
+  language        AuthorizedResumeLanguage
+  version         String
+  sha256          String
+  contentType     String
+  byteSize        Int
+  fileData        Bytes                    @db.ByteA
+  authorizedAt    DateTime                 @default(now())
+  createdAt       DateTime                 @default(now())
+  updatedAt       DateTime                 @updatedAt
+  profile         CandidateProfile         @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  matches         JobMatch[]
+  applications    JobApplication[]
+  applicationKits ApplicationKit[]
 
   @@index([profileId, profileType, language])
 }

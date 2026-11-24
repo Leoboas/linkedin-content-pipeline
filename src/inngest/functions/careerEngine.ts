@@ -1,5 +1,6 @@
 import { inngest } from "@/inngest/client";
 import { runCareerScan } from "@/lib/career-engine";
+import { prepareApplicationKit } from "@/lib/career-application-kit";
 import type { CareerSourceKey } from "@/lib/job-source-connectors";
 
 export const careerSearchPipeline = inngest.createFunction(
@@ -15,5 +16,20 @@ export const careerSearchPipeline = inngest.createFunction(
       console.error("[career/inngest] execução falhou", { runId: data.runId, error: error instanceof Error ? error.message : "Erro desconhecido" });
       throw error;
     }
+  },
+);
+
+export const prepareCareerApplicationKit = inngest.createFunction(
+  {
+    id: "career-prepare-application-kit",
+    retries: 2,
+    idempotency: "event.data.requestKey",
+    concurrency: { limit: 1, key: "event.data.applicationId" },
+  },
+  { event: "career/application.prepare.requested" },
+  async ({ event, step }) => {
+    const data = event.data as { applicationId: string; requestKey: string };
+    if (!data.applicationId || !data.requestKey) throw new Error("Evento de preparação de candidatura sem chave idempotente.");
+    return step.run("prepare-versioned-application-kit", () => prepareApplicationKit(data.applicationId, data.requestKey));
   },
 );

@@ -1,25 +1,33 @@
 # Banco isolado para desenvolvimento
 
-Os comandos `db:migrate:deploy`, `db:reconcile-projects` e `knowledge:import` não usam `.env` nem `.env.local` como alvo. Eles carregam exclusivamente `.env.development.local`, validam a confirmação explícita do Neon e comparam o fingerprint do destino com os alvos encontrados nos dois arquivos locais existentes.
+## Supabase Free (recomendado para testes sem projeto Neon adicional)
 
-Crie no Neon um branch novo de desenvolvimento, independente do branch Production. Confirme no Console da Neon o projeto, o branch, o endpoint/host, o database e o usuário. Não use branch com dados clonados de Production: os testes da Etapa C devem usar banco vazio e dados sintéticos.
+Use um projeto Supabase novo e vazio, criado no plano Free, sem importar ou clonar dados de Production. Não use `pipeline-db/main`, o branch `Development` derivado de Production, nem outro banco com dados desconhecidos. A conta Free pode pausar projetos com pouca atividade; isso não deve gerar cobrança, mas será necessário reativar o projeto no painel quando quiser usá-lo.
 
-Crie `.env.development.local` (ignorado pelo Git) com:
+1. No Supabase, crie um projeto PostgreSQL independente e anote o project ref exibido no painel.
+2. Em **Connect**, copie a conexão direta ou o **Session Pooler na porta 5432**. Em redes IPv4, o Session Pooler costuma ser necessário. Não use Transaction Pooler/porta 6543 para migrations.
+3. Crie `.env.development.local` (arquivo ignorado pelo Git) com os campos abaixo. Guarde a URL e senha apenas localmente; não as envie no chat nem as configure na Vercel.
 
 ```dotenv
+DB_PROVIDER=supabase
 DB_ENVIRONMENT=development
 DB_TARGET_CONFIRMED=true
-NEON_PROJECT_ID=project-id-confirmado-no-console
-NEON_BRANCH_ID=branch-id-confirmado-no-console
-DB_PRODUCTION_BRANCH_ID=branch-id-do-ambiente-production
-DB_EXPECTED_NEON_PROJECT_ID=project-id-confirmado-no-console
-DB_EXPECTED_NEON_BRANCH_ID=branch-id-confirmado-no-console
+SUPABASE_PROJECT_REF=project-ref-do-painel
+DB_EXPECTED_SUPABASE_PROJECT_REF=project-ref-do-painel
 DB_EXPECTED_FINGERPRINT=SUBSTITUIR_PELO_FINGERPRINT_VALIDADO
-POSTGRES_PRISMA_URL=postgresql://usuario:senha@endpoint-do-branch.neon.tech/database?sslmode=require
+POSTGRES_PRISMA_URL=postgresql://usuario:senha@host-session-pooler.supabase.com:5432/postgres?sslmode=require
 ```
 
-O fingerprint é SHA-256 de protocol, hostname, porta, database e usuário; a senha e query string não entram. Primeiro execute `npm run db:target:check` com fingerprint temporário para obter o valor observado no erro, compare projeto/branch/host no Console Neon e só então preencha `DB_EXPECTED_FINGERPRINT`. O comando de checagem não abre conexão. Execute novamente: confirmação bem-sucedida também não abre conexão.
+`npm run db:target:check` não abre conexão nem altera o banco. Compare project ref, host e database da URL com o painel Supabase. Para descobrir o fingerprint, deixe temporariamente o campo esperado diferente do observado; o erro mostrará o fingerprint calculado, que não contém senha nem query string. Preencha-o e rode a checagem novamente. A checagem também bloqueia URLs que coincidam com `POSTGRES_PRISMA_URL` em `.env` ou `.env.local`.
 
-O guard bloqueia se os IDs do projeto/branch divergem, se o fingerprint diverge, se o host não for Neon ou se a conexão coincidir com `POSTGRES_PRISMA_URL` de `.env`/`.env.local`. A rotina de migration passa ao Prisma CLI exatamente a conexão confirmada. Não use `npx prisma migrate`, `prisma db push` ou outro comando de escrita direto; `prisma:push` foi intencionalmente desabilitado.
+O guard valida host/ref Supabase, fingerprint, ambiente e conexão, e rejeita o Transaction Pooler. Os scripts de escrita carregam somente `.env.development.local`; não usam `.env` ou `.env.local` como destino. O Prisma recebe exclusivamente a URL validada.
 
-Com o alvo confirmado, a sequência planejada é `npm run db:migrate:deploy`, seguida pelas verificações de schema e testes sintéticos. O banco de desenvolvimento deve estar vazio para o replay integral. Se uma migration falhar por dados divergentes, não edite migrations já aplicadas nem use `db push`: investigue e crie uma correção versionada após revisar a causa.
+Antes do replay, o banco deve estar vazio. `npm run db:migrate:deploy` verifica que não há dados nas tabelas de aplicação; `npm run persistence:integration` também se recusa a iniciar se encontrar dados. Use somente dados sintéticos. Não rode `npx vercel env pull`, `prisma db push` ou comandos Prisma de escrita diretamente.
+
+## Neon (compatibilidade com configurações existentes)
+
+O guard ainda suporta Neon com `DB_PROVIDER=neon` (ou sem `DB_PROVIDER`, por compatibilidade). Para este release, não use `pipeline-db/main` nem o branch Development que deriva de Production. Se usar outro Neon, ele precisa ser um destino independente e vazio, confirmado pelo projeto, branch e fingerprint antes de qualquer escrita.
+
+## Banco vazio e migrations
+
+Com o destino confirmado, execute o replay versionado e os testes de persistência em sequência. Se uma migration falhar por divergência, interrompa e investigue; não reescreva migrations aplicadas e não use `db push` para esconder drift.
