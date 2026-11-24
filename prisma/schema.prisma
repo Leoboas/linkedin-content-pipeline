@@ -1228,6 +1228,7 @@ model JobApplication {
   @@unique([profileId, jobId])
   @@index([profileId, status, updatedAt])
   @@index([jobId, status])
+  @@index([preparationStatus, updatedAt])
 }
 
 model JobApplicationEvent {

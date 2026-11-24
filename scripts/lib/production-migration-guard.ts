@@ -24,6 +24,11 @@ export const productionExpectedPendingMigrations = [
   "20261123100000_application_queue_and_kits",
 ] as const;
 
+export const productionExpectedPostApplyMigrations = [
+  ...productionExpectedAppliedMigrations,
+  ...productionExpectedPendingMigrations,
+] as const;
+
 const RECOVERY_MAX_AGE_MS = 30 * 60 * 1000;
 
 export function assertProductionMigrationAcknowledgements(

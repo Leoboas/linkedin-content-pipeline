@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { PrismaClient } from "@prisma/client";
-import { assertProductionMigrationAcknowledgements, productionExpectedAppliedMigrations, productionExpectedPendingMigrations } from "./lib/production-migration-guard.ts";
+import { assertProductionMigrationAcknowledgements, productionExpectedAppliedMigrations, productionExpectedPendingMigrations, productionExpectedPostApplyMigrations } from "./lib/production-migration-guard.ts";
 
 const root = process.cwd();
 const expectedHost = "ep-rapid-smoke-acgsved1.sa-east-1.aws.neon.tech";
@@ -130,9 +130,12 @@ async function main(): Promise<void> {
     if (rolledBack.some((migration) => migration.migration_name !== knownFailedMigration)) {
       throw new Error("O histórico contém uma migration revertida não reconhecida; operação bloqueada.");
     }
-    if (successful.length !== productionExpectedAppliedMigrations.length
-      || !productionExpectedAppliedMigrations.every((name, index) => successful[index]?.migration_name === name)) {
-      throw new Error("O histórico bem-sucedido de Production diverge das 19 migrations confirmadas; nenhuma migration será executada.");
+    const successfulNamesMatch = (expected: readonly string[]) => successful.length === expected.length
+      && expected.every((name, index) => successful[index]?.migration_name === name);
+    const isKnownPreApplyState = successfulNamesMatch(productionExpectedAppliedMigrations);
+    const isKnownPostApplyState = successfulNamesMatch(productionExpectedPostApplyMigrations);
+    if (!isKnownPreApplyState && !isKnownPostApplyState) {
+      throw new Error("O histórico bem-sucedido de Production não corresponde ao estado esperado antes (19) ou depois (20) da migration.");
     }
     if (successful.length > migrationNames.length
       || successful.some((migration, index) => migration.migration_name !== migrationNames[index])) {
@@ -146,7 +149,7 @@ async function main(): Promise<void> {
     const pending = migrationNames.filter((name) => !successfulNames.includes(name));
     const hasExpectedPending = pending.length === productionExpectedPendingMigrations.length
       && productionExpectedPendingMigrations.every((name, index) => pending[index] === name);
-    if (pending.length !== 0 && !hasExpectedPending) {
+    if ((isKnownPreApplyState && !hasExpectedPending) || (isKnownPostApplyState && pending.length !== 0)) {
       throw new Error(`A cadeia pendente difere da migration esperada ${productionExpectedPendingMigrations.join(", ")}: ${pending.join(", ") || "nenhuma"}.`);
     }
     for (const name of pending) {
@@ -165,6 +168,13 @@ async function main(): Promise<void> {
       })));
       console.info("Diagnóstico SQL somente leitura", sqlProbe);
       console.info("Cadeia versionada validada", { applied: successfulNames, pending });
+      const prismaCli = resolve(root, "node_modules", "prisma", "build", "index.js");
+      const schemaDiff = execFileSync(process.execPath, [prismaCli, "migrate", "diff", "--from-schema-datasource", "prisma/schema.prisma", "--to-schema-datamodel", "prisma/schema.prisma", "--script"], {
+        encoding: "utf8",
+        env: process.env,
+        stdio: ["ignore", "pipe", "pipe"],
+      }).trim();
+      console.info("Diferença física Prisma vs banco", schemaDiff || "sem diferenças");
       return;
     }
     if (Number(languageAudit.invalid_rows) !== 0) {
@@ -217,7 +227,7 @@ async function main(): Promise<void> {
       stdio: ["ignore", "pipe", "pipe"],
     }).trim();
     if (schemaDiff && schemaDiff !== "-- This is an empty migration.") {
-      throw new Error("As migrations foram registradas, mas ainda há divergência física contra schema.prisma; preserve o log e investigue antes de deploy.");
+      throw new Error(`As migrations foram registradas, mas ainda há divergência física contra schema.prisma; preserve o log e investigue antes de deploy. Diff: ${schemaDiff}`);
     }
     console.info("Migrations Production concluídas e histórico validado.", { count: appliedAfter.length });
   } finally {
