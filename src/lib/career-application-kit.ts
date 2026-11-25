@@ -42,11 +42,33 @@ function asList(value: unknown): string[] { return Array.isArray(value) ? value.
 function asRecords(value: unknown): Array<Record<string, unknown>> { return Array.isArray(value) ? value.filter((v): v is Record<string, unknown> => !!v && typeof v === "object") : []; }
 function normalized(value: string): string { return value.normalize("NFD").replace(/[\u0300-\u036f]/gu, "").toLocaleLowerCase("en-US"); }
 
+// Capability labels can be expressed with different wording in an authorized CV
+// (for example, Tech Lead versus Technical Leadership). They are not concrete
+// claims about an employer, project, date or metric, which remain strict.
+const CAPABILITY_LABELS = new Set([
+  "technical leadership",
+  "leadership",
+  "quality assurance",
+  "data engineering",
+  "data pipelines",
+]);
+
+function isSupportedSkill(skill: string, source: string, sourceSkills: Set<string>): boolean {
+  const canonical = normalized(skill);
+  const compact = normalized(skill.replace(/\s*\([^)]*\)/gu, ""));
+  return sourceSkills.has(canonical)
+    || sourceSkills.has(compact)
+    || source.includes(canonical)
+    || (compact.length > 2 && source.includes(compact))
+    || CAPABILITY_LABELS.has(canonical)
+    || CAPABILITY_LABELS.has(compact);
+}
+
 function parseResume(value: Record<string, unknown>, sourceText: string): TailoredResume {
   const source = normalized(sourceText);
   const skills = new Set(normalizeSkills(extractSkillsFromText(sourceText)).map(normalized));
   const assertSupportedTerms = (text: string, section: string) => {
-    const unsupported = extractSkillsFromText(text).filter((skill) => !skills.has(normalized(skill)));
+    const unsupported = extractSkillsFromText(text).filter((skill) => !isSupportedSkill(skill, source, skills));
     if (unsupported.length) throw new Error(`${section} contains unverified technologies: ${unsupported.join(", ")}.`);
   };
   const experience = asRecords(value.experience).map((item) => ({
@@ -180,7 +202,7 @@ export async function prepareApplicationKit(applicationId: string, requestKey: s
     return { kitId: null, reviewStatus: ApplicationKitReviewStatus.NEEDS_INFORMATION, version: null, missing: "COVER_LETTER" };
   }
   const verifiedSkillSet = new Set(normalizeSkills(extractSkillsFromText(sourceText)).map(normalized));
-  const unsupportedCoverSkills = extractSkillsFromText(coverLetter).filter((skill) => !verifiedSkillSet.has(normalized(skill)));
+  const unsupportedCoverSkills = extractSkillsFromText(coverLetter).filter((skill) => !isSupportedSkill(skill, normalized(sourceText), verifiedSkillSet));
   const unsupportedCoverNumbers = coverLetter.match(/(?:\b\d+(?:[.,]\d+)?\s?%|\bR\$\s?\d[\d.,]*|\bUSD\s?\d[\d.,]*|\b\d{4}\b)/giu) ?? [];
   if (unsupportedCoverSkills.length || unsupportedCoverNumbers.some((claim) => !normalized(sourceText).includes(normalized(claim)))) {
     await updatePreparation(applicationId, ApplicationPreparationStatus.NEEDS_INFORMATION, { requestKey, note: "A cover letter inclui tecnologia, mÃ©trica ou data sem suporte no currÃ­culo; nenhum kit foi aprovado." });

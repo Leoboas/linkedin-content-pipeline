@@ -74,8 +74,8 @@ export function getResumeMetadataByName(name: string) {
 
 export function recommendAuthorizedResume(input: { title: string; description: string; languageHint?: string }) {
   const text = `${input.title} ${input.description}`.toLocaleLowerCase("en-US");
-  const isData = /data engineer|data engineering|data platform|analytics engineer|etl|elt|pyspark|apache spark|data pipeline/.test(text);
-  const isBackend = /python backend|backend engineer|back-end|software engineer|api engineer|fastapi|django/.test(text);
+  const isData = /data engineer|data engineering|data platform|analytics engineer|analytics lead|etl|elt|pyspark|apache spark|data pipeline|\bdata\b/.test(text);
+  const isBackend = /python backend|backend engineer|back-end|\bbackend\b|software engineer|api engineer|fastapi|django|\bpython\b|full[ -]?stack/.test(text);
   const language: "EN" | "PT_BR" = input.languageHint === "PT_BR" ? "PT_BR" : "EN";
   if (isData) {
     return { resumeKey: language === "PT_BR" ? AUTHORIZED_RESUMES.dataEngineeringPtBr.resumeKey : AUTHORIZED_RESUMES.dataEngineeringEn.resumeKey, profileType: "DATA_ENGINEERING" as const, language, reason: "Perfil de Data Engineering selecionado pelo cargo e requisitos identificados; idioma presumido pelo mercado/texto da vaga." };

@@ -4,6 +4,7 @@ import { inngest } from "@/inngest/client";
 import { prisma } from "@/lib/prisma";
 import { getOrCreateProfile } from "@/lib/career-engine";
 import { isDashboardAuthorized } from "@/lib/dashboard-auth";
+import { isCandidateResumeKey } from "@/lib/authorized-resume-versioning";
 
 const activePreparation = new Set<ApplicationPreparationStatus>([
   ApplicationPreparationStatus.QUEUED,
@@ -33,11 +34,16 @@ export async function GET(request: Request): Promise<NextResponse> {
     },
     orderBy: { updatedAt: "desc" },
   });
+  const authorizedResumes = (await prisma.authorizedResume.findMany({
+    where: { profileId: profile.id },
+    select: { id: true, resumeKey: true, originalName: true, version: true, language: true, profileType: true, updatedAt: true },
+    orderBy: { updatedAt: "desc" },
+  })).filter((resume) => isCandidateResumeKey(resume.resumeKey));
   return NextResponse.json({ applications: applications.map(({ job, ...application }) => {
     const latestMatch = job.matches[0];
     const { matches: _matches, ...jobData } = job;
     return { ...application, job: { ...jobData, score: latestMatch?.score ?? 0, label: latestMatch?.label ?? "Sem match", rationale: latestMatch?.rationale ?? "", eligibilityStatus: latestMatch?.eligibilityStatus ?? "UNKNOWN", eligibilityReasons: latestMatch?.eligibilityReasons ?? [], recommendedResume: latestMatch?.recommendedResume ?? null, recommendedResumeReason: latestMatch?.recommendedResumeReason ?? null } };
-  }) });
+  }), authorizedResumes });
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -50,13 +56,19 @@ export async function POST(request: Request): Promise<NextResponse> {
   const profile = await getOrCreateProfile();
   const match = await prisma.jobMatch.findUnique({ where: { profileId_jobId: { profileId: profile.id, jobId: body.jobId } }, select: { recommendedResumeId: true } });
   const job = await prisma.jobListing.findUnique({ where: { id: body.jobId }, select: { id: true } });
+  const explicitResume = typeof body.authorizedResumeId === "string"
+    ? await prisma.authorizedResume.findFirst({ where: { id: body.authorizedResumeId, profileId: profile.id }, select: { id: true, resumeKey: true } })
+    : null;
+  if (typeof body.authorizedResumeId === "string" && (!explicitResume || !isCandidateResumeKey(explicitResume.resumeKey))) {
+    return NextResponse.json({ error: "Selecione um dos quatro currículos V2 autorizados." }, { status: 400 });
+  }
   if (!job) return NextResponse.json({ error: "Vaga não encontrada." }, { status: 404 });
 
   const application = await prisma.$transaction(async (tx) => {
     const current = await tx.jobApplication.findUnique({ where: { profileId_jobId: { profileId: profile.id, jobId: job.id } } });
     if (!current) {
       const created = await tx.jobApplication.create({ data: {
-        profileId: profile.id, jobId: job.id, status: "SAVED", authorizedResumeId: match?.recommendedResumeId ?? null,
+        profileId: profile.id, jobId: job.id, status: "SAVED", authorizedResumeId: explicitResume?.id ?? match?.recommendedResumeId ?? null,
         preparationStatus: queueNow ? ApplicationPreparationStatus.QUEUED : ApplicationPreparationStatus.NOT_QUEUED,
         preparationAttempt: queueNow ? 1 : 0,
       } });
@@ -65,7 +77,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
     if (!queueNow || activePreparation.has(current.preparationStatus) || terminalOrSubmitted.has(current.status)) return current;
     const attempt = current.preparationAttempt + 1;
-    const updated = await tx.jobApplication.update({ where: { id: current.id }, data: { preparationStatus: ApplicationPreparationStatus.QUEUED, preparationAttempt: attempt, ...(match?.recommendedResumeId ? { authorizedResumeId: match.recommendedResumeId } : {}) } });
+    const updated = await tx.jobApplication.update({ where: { id: current.id }, data: { preparationStatus: ApplicationPreparationStatus.QUEUED, preparationAttempt: attempt, ...(explicitResume?.id ? { authorizedResumeId: explicitResume.id } : match?.recommendedResumeId ? { authorizedResumeId: match.recommendedResumeId } : {}) } });
     await tx.jobApplicationEvent.create({ data: { applicationId: current.id, eventType: JobApplicationEventType.PREPARATION_STATUS_CHANGED, fromPreparationStage: current.preparationStatus, toPreparationStage: ApplicationPreparationStatus.QUEUED, source: "USER", idempotencyKey: `queue:${current.id}:${attempt}` } });
     return updated;
   });

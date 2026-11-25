@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getOrCreateProfile } from "@/lib/career-engine";
 import { isDashboardAuthorized } from "@/lib/dashboard-auth";
+import { isCandidateResumeKey } from "@/lib/authorized-resume-versioning";
 
 const allowedStatuses = new Set<string>(Object.values(JobApplicationStatus));
 const allowedPreparationStatuses = new Set<string>(Object.values(ApplicationPreparationStatus));
@@ -20,7 +21,14 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
   const profile = await getOrCreateProfile();
   const current = await prisma.jobApplication.findFirst({ where: { id, profileId: profile.id }, select: { id: true, jobId: true, authorizedResumeId: true, status: true, preparationStatus: true } });
   if (!current) return NextResponse.json({ error: "Candidatura não encontrada." }, { status: 404 });
-  const data: { status?: JobApplicationStatus; preparationStatus?: ApplicationPreparationStatus; notes?: string | null; recruiterContact?: string | null; appliedAt?: Date | null; submissionEvidence?: string | null; submissionEvidenceAt?: Date | null } = {};
+  const data: { status?: JobApplicationStatus; preparationStatus?: ApplicationPreparationStatus; authorizedResumeId?: string; notes?: string | null; recruiterContact?: string | null; appliedAt?: Date | null; submissionEvidence?: string | null; submissionEvidenceAt?: Date | null } = {};
+  if (typeof body.authorizedResumeId === "string") {
+    const resume = await prisma.authorizedResume.findFirst({ where: { id: body.authorizedResumeId, profileId: profile.id }, select: { id: true, resumeKey: true } });
+    if (!resume || !isCandidateResumeKey(resume.resumeKey)) return NextResponse.json({ error: "Selecione um dos quatro currículos V2 autorizados." }, { status: 400 });
+    const latestKit = await prisma.applicationKit.findFirst({ where: { applicationId: current.id }, orderBy: { version: "desc" }, select: { id: true } });
+    if (latestKit) return NextResponse.json({ error: "Este kit já possui uma base documental. Crie uma nova revisão para trocar o currículo sem perder rastreabilidade." }, { status: 409 });
+    data.authorizedResumeId = resume.id;
+  }
   if (typeof body.status === "string") {
     if (!allowedStatuses.has(body.status)) return NextResponse.json({ error: "Status de candidatura inválido." }, { status: 400 });
     data.status = body.status as JobApplicationStatus;

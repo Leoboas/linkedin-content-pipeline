@@ -4,29 +4,36 @@ import { inngest } from "@/inngest/client";
 import { getOrCreateProfile } from "@/lib/career-engine";
 import { isDashboardAuthorized } from "@/lib/dashboard-auth";
 import { prisma } from "@/lib/prisma";
+import { isCandidateResumeKey } from "@/lib/authorized-resume-versioning";
 
 const active = new Set<ApplicationPreparationStatus>([ApplicationPreparationStatus.QUEUED, ApplicationPreparationStatus.PREPARING, ApplicationPreparationStatus.READY_FOR_REVIEW, ApplicationPreparationStatus.APPROVED_FOR_SUBMISSION]);
 const terminal = new Set(["APPLIED", "SCREENING", "INTERVIEW", "TECHNICAL_TEST", "OFFER", "REJECTED", "WITHDRAWN", "ARCHIVED"]);
 
 export async function POST(request: Request): Promise<NextResponse> {
   if (!isDashboardAuthorized(request)) return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
-  let body: { applicationIds?: unknown };
-  try { body = await request.json() as { applicationIds?: unknown }; }
+  let body: { applicationIds?: unknown; resumeByApplicationId?: unknown };
+  try { body = await request.json() as { applicationIds?: unknown; resumeByApplicationId?: unknown }; }
   catch { return NextResponse.json({ error: "JSON inválido." }, { status: 400 }); }
   if (!Array.isArray(body.applicationIds) || body.applicationIds.length < 1 || body.applicationIds.length > 25 || body.applicationIds.some((id) => typeof id !== "string" || !/^[0-9a-f-]{36}$/iu.test(id))) {
     return NextResponse.json({ error: "Envie de 1 a 25 IDs de candidaturas válidos." }, { status: 400 });
   }
   const profile = await getOrCreateProfile();
   const uniqueIds = [...new Set(body.applicationIds as string[])];
+  const resumeSelections = body.resumeByApplicationId && typeof body.resumeByApplicationId === "object" && !Array.isArray(body.resumeByApplicationId)
+    ? body.resumeByApplicationId as Record<string, unknown>
+    : {};
   let queued = 0;
   let skipped = 0;
   const errors: string[] = [];
   for (const id of uniqueIds) {
+    const selectedResumeId = typeof resumeSelections[id] === "string" ? resumeSelections[id] : null;
     const queuedApplication = await prisma.$transaction(async (tx) => {
       const application = await tx.jobApplication.findFirst({ where: { id, profileId: profile.id } });
       if (!application || terminal.has(application.status) || active.has(application.preparationStatus)) return null;
+      const selectedResume = selectedResumeId ? await tx.authorizedResume.findFirst({ where: { id: selectedResumeId, profileId: profile.id }, select: { id: true, resumeKey: true } }) : null;
+      if (selectedResumeId && (!selectedResume || !isCandidateResumeKey(selectedResume.resumeKey))) throw new Error("Currículo V2 selecionado inválido.");
       const attempt = application.preparationAttempt + 1;
-      const updated = await tx.jobApplication.update({ where: { id }, data: { preparationStatus: ApplicationPreparationStatus.QUEUED, preparationAttempt: attempt } });
+      const updated = await tx.jobApplication.update({ where: { id }, data: { preparationStatus: ApplicationPreparationStatus.QUEUED, preparationAttempt: attempt, ...(selectedResume ? { authorizedResumeId: selectedResume.id } : {}) } });
       await tx.jobApplicationEvent.create({ data: { applicationId: id, eventType: JobApplicationEventType.PREPARATION_STATUS_CHANGED, fromPreparationStage: application.preparationStatus, toPreparationStage: ApplicationPreparationStatus.QUEUED, source: "USER", note: "Incluída manualmente na fila em lote.", idempotencyKey: `queue:${id}:${attempt}` } });
       return updated;
     });

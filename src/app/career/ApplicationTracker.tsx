@@ -7,7 +7,8 @@ import { SubmissionReview } from "@/app/career/SubmissionReview";
 type Match = { id: string; title: string; company: string | null; location: string | null; url: string; score: number; rationale: string; eligibilityStatus?: string; eligibilityReasons?: string[]; recommendedResume?: { id: string; originalName: string; version: string } | null };
 type Kit = { id: string; version: number; language: string; coverLetter: string; reviewStatus: string; documentSha256: string | null; createdAt: string; requiredConfirmations: string[]; unverifiedRequirements: string[] };
 type ApplicationEvent = { id: string; eventType: string; fromRecruitmentStage: string | null; toRecruitmentStage: string | null; fromPreparationStage: string | null; toPreparationStage: string | null; source: string; note: string | null; createdAt: string };
-type AppItem = { id: string; status: string; preparationStatus: string; notes: string | null; recruiterContact: string | null; submissionEvidence: string | null; authorizedResume: { originalName: string; version: string; language: string } | null; job: Match & { description: string }; kits: Kit[]; events: ApplicationEvent[]; submissions: Array<{ id: string; state: string; reason: string | null; portalReceipt: string | null }> };
+type ResumeOption = { id: string; originalName: string; version: string; language: string; profileType: string };
+type AppItem = { id: string; status: string; preparationStatus: string; notes: string | null; recruiterContact: string | null; submissionEvidence: string | null; authorizedResume: { id: string; originalName: string; version: string; language: string } | null; job: Match & { description: string }; kits: Kit[]; events: ApplicationEvent[]; submissions: Array<{ id: string; state: string; reason: string | null; portalReceipt: string | null }> };
 
 const recruitmentStages = ["SAVED", "SCREENING", "INTERVIEW", "TECHNICAL_TEST", "OFFER", "APPLIED", "REJECTED", "WITHDRAWN", "ARCHIVED"];
 const preparationStages = ["NOT_QUEUED", "QUEUED", "PREPARING", "NEEDS_INFORMATION", "READY_FOR_REVIEW", "APPROVED_FOR_SUBMISSION", "SUBMITTING", "SUBMISSION_FAILED", "MANUAL_ACTION_REQUIRED"];
@@ -19,6 +20,8 @@ const submittedStages = new Set(["APPLIED", "SCREENING", "INTERVIEW", "TECHNICAL
 export function ApplicationTracker({ token }: { token: string }) {
   const [matches, setMatches] = useState<Match[]>([]);
   const [applications, setApplications] = useState<AppItem[]>([]);
+  const [authorizedResumes, setAuthorizedResumes] = useState<ResumeOption[]>([]);
+  const [resumeSelections, setResumeSelections] = useState<Record<string, string>>({});
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -40,6 +43,7 @@ export function ApplicationTracker({ token }: { token: string }) {
         return { id: String(job.id), title: String(job.title), company: job.company as string | null, location: job.location as string | null, url: String(job.url), score: Number(row.score), rationale: String(row.rationale), eligibilityStatus: String(row.eligibilityStatus ?? "UNKNOWN"), eligibilityReasons: Array.isArray(row.eligibilityReasons) ? row.eligibilityReasons as string[] : [], recommendedResume: row.recommendedResume as Match["recommendedResume"] ?? null };
       }));
       setApplications(appPayload.applications ?? []);
+      setAuthorizedResumes(appPayload.authorizedResumes ?? []);
     } catch (cause) { setError(cause instanceof Error ? cause.message : "Falha ao carregar vagas."); }
     finally { setBusy(false); }
   }, [headers]);
@@ -87,7 +91,8 @@ export function ApplicationTracker({ token }: { token: string }) {
 
   async function queueApplication(applicationId: string) {
     try {
-      const response = await fetch("/api/career/applications/batch-queue", { method: "POST", headers, body: JSON.stringify({ applicationIds: [applicationId] }) });
+      const selectedResumeId = resumeSelections[applicationId];
+      const response = await fetch("/api/career/applications/batch-queue", { method: "POST", headers, body: JSON.stringify({ applicationIds: [applicationId], ...(selectedResumeId ? { resumeByApplicationId: { [applicationId]: selectedResumeId } } : {}) }) });
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? "Não foi possível incluir na fila.");
       setMessage(payload.enqueueFailures?.length ? "A vaga ficou registrada, mas o Inngest não confirmou o evento. Tente novamente." : "Vaga enviada à fila de preparação.");
@@ -159,7 +164,7 @@ export function ApplicationTracker({ token }: { token: string }) {
           {item.kits[0]?.reviewStatus === "NEEDS_REVIEW" && <SubmissionReview kitId={item.kits[0].id} headers={headers} onDone={load} />}
           {item.submissions?.[0] && <p className="admin-meta">Envio: {({ QUEUED: "Na fila", FILLING: "Preparando anexos", SUBMITTING: "Enviando", CONFIRMED: "Confirmado pelo portal", TEST_PASSED: "Teste concluído sem envio", NEEDS_ACTION: "Ação necessária", UNCERTAIN: "Envio incerto", REVOKED: "Autorização revogada" } as Record<string, string>)[item.submissions[0].state] ?? item.submissions[0].state}{item.submissions[0].reason ? ` — ${item.submissions[0].reason}` : ""}{item.submissions[0].portalReceipt ? ` · Protocolo: ${item.submissions[0].portalReceipt}` : ""}</p>}
           {status === "NOT_QUEUED" && <button className="admin-button active" onClick={() => void queueApplication(item.id)}>Incluir na fila</button>}
-          {status === "NEEDS_INFORMATION" && <a className="admin-button" href="/career#resume-builder">Importar ou revisar currículos</a>}
+          {status === "NEEDS_INFORMATION" && <div className="admin-actions"><label className="admin-meta">Currículo V2 para esta vaga<select className="admin-input" value={resumeSelections[item.id] ?? item.authorizedResume?.id ?? ""} onChange={(event) => setResumeSelections((current) => ({ ...current, [item.id]: event.target.value }))}><option value="">Escolher currículo autorizado</option>{authorizedResumes.map((resume) => <option key={resume.id} value={resume.id}>{resume.originalName} · {resume.language}</option>)}</select></label><button className="admin-button active" disabled={!resumeSelections[item.id] && !item.authorizedResume?.id} onClick={() => void queueApplication(item.id)}>Usar currículo e preparar novamente</button><a className="admin-button" href="/career#resume-builder">Ver biblioteca</a></div>}
           {status === "SUBMISSION_FAILED" && <button className="admin-button" onClick={() => void queueApplication(item.id)}>Tentar preparação novamente</button>}
           {item.events[0] && <small className="admin-meta">Última atualização: {new Date(item.events[0].createdAt).toLocaleString("pt-BR")} · {item.events[0].note ?? item.events[0].eventType}</small>}
         </article>) : <p className="admin-empty-state">Nenhuma vaga nesta etapa.</p>}</section>;
