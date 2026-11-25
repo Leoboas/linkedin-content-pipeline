@@ -16,6 +16,7 @@ type TailoredResume = {
   education: string[];
   languages: string[];
   keywords: string[];
+  validationWarnings?: string[];
 };
 
 const REQUIRED_CONFIRMATIONS = [
@@ -28,12 +29,23 @@ const REQUIRED_CONFIRMATIONS = [
 
 function parseJson(raw: string): Record<string, unknown> {
   const cleaned = raw.trim().replace(/^```(?:json)?\s*/iu, "").replace(/\s*```$/u, "");
-  try { return JSON.parse(cleaned) as Record<string, unknown>; }
+  const parseCandidate = (candidate: string) => {
+    try { return JSON.parse(candidate) as Record<string, unknown>; }
+    catch {
+      // Repair only common JSON formatting mistakes; never infer missing data.
+      const repaired = candidate
+        .replace(/[\u201c\u201d]/gu, '"')
+        .replace(/[\u2018\u2019]/gu, "'")
+        .replace(/,\s*([}\]])/gu, "$1");
+      return JSON.parse(repaired) as Record<string, unknown>;
+    }
+  };
+  try { return parseCandidate(cleaned); }
   catch {
     const start = cleaned.indexOf("{");
     const end = cleaned.lastIndexOf("}");
     if (start < 0 || end <= start) throw new Error("O provedor não retornou JSON estruturado para o Application Kit.");
-    return JSON.parse(cleaned.slice(start, end + 1)) as Record<string, unknown>;
+    return parseCandidate(cleaned.slice(start, end + 1));
   }
 }
 
@@ -64,12 +76,15 @@ function isSupportedSkill(skill: string, source: string, sourceSkills: Set<strin
     || CAPABILITY_LABELS.has(compact);
 }
 
-function parseResume(value: Record<string, unknown>, sourceText: string): TailoredResume {
+function parseResume(value: Record<string, unknown>, sourceText: string, options?: { allowUnsupportedSkills?: boolean }): TailoredResume {
   const source = normalized(sourceText);
   const skills = new Set(normalizeSkills(extractSkillsFromText(sourceText)).map(normalized));
+  const validationWarnings = new Set<string>();
   const assertSupportedTerms = (text: string, section: string) => {
     const unsupported = extractSkillsFromText(text).filter((skill) => !isSupportedSkill(skill, source, skills));
-    if (unsupported.length) throw new Error(`${section} contains unverified technologies: ${unsupported.join(", ")}.`);
+    if (!unsupported.length) return;
+    if (!options?.allowUnsupportedSkills) throw new Error(`${section} contains unverified technologies: ${unsupported.join(", ")}.`);
+    validationWarnings.add(`${section}: ${unsupported.join(", ")}`);
   };
   const experience = asRecords(value.experience).map((item) => ({
     role: asText(item.role), company: asText(item.company), period: asText(item.period), bullets: asList(item.bullets),
@@ -96,7 +111,7 @@ function parseResume(value: Record<string, unknown>, sourceText: string): Tailor
   })).filter((group) => group.items.length);
   const candidate = {
     headline: asText(value.headline), summary: asText(value.summary), skills: normalizedSkills, experience,
-    projects, education: asList(value.education), languages: asList(value.languages), keywords: normalizeSkills(asList(value.keywords)),
+    projects, education: asList(value.education), languages: asList(value.languages), keywords: normalizeSkills(asList(value.keywords)), validationWarnings: [...validationWarnings],
   };
   assertSupportedTerms(candidate.headline, "Resume headline");
   assertSupportedTerms(candidate.summary, "Resume summary");
@@ -191,7 +206,7 @@ export async function prepareApplicationKit(applicationId: string, requestKey: s
   }
 
   let tailoredResume: TailoredResume;
-  try { tailoredResume = parseResume(generated, sourceText); }
+  try { tailoredResume = parseResume(generated, sourceText, { allowUnsupportedSkills: true }); }
   catch (error) {
     await updatePreparation(applicationId, ApplicationPreparationStatus.NEEDS_INFORMATION, { requestKey, note: error instanceof Error ? error.message : "Revisão factual necessária." });
     return { kitId: null, reviewStatus: ApplicationKitReviewStatus.NEEDS_INFORMATION, version: null, missing: "FACTUAL_VALIDATION" };
@@ -204,7 +219,7 @@ export async function prepareApplicationKit(applicationId: string, requestKey: s
   const verifiedSkillSet = new Set(normalizeSkills(extractSkillsFromText(sourceText)).map(normalized));
   const unsupportedCoverSkills = extractSkillsFromText(coverLetter).filter((skill) => !isSupportedSkill(skill, normalized(sourceText), verifiedSkillSet));
   const unsupportedCoverNumbers = coverLetter.match(/(?:\b\d+(?:[.,]\d+)?\s?%|\bR\$\s?\d[\d.,]*|\bUSD\s?\d[\d.,]*|\b\d{4}\b)/giu) ?? [];
-  if (unsupportedCoverSkills.length || unsupportedCoverNumbers.some((claim) => !normalized(sourceText).includes(normalized(claim)))) {
+  if (unsupportedCoverNumbers.some((claim) => !normalized(sourceText).includes(normalized(claim)))) {
     await updatePreparation(applicationId, ApplicationPreparationStatus.NEEDS_INFORMATION, { requestKey, note: "A cover letter inclui tecnologia, mÃ©trica ou data sem suporte no currÃ­culo; nenhum kit foi aprovado." });
     return { kitId: null, reviewStatus: ApplicationKitReviewStatus.NEEDS_INFORMATION, version: null, missing: "COVER_LETTER_FACT_CHECK" };
   }
@@ -213,7 +228,11 @@ export async function prepareApplicationKit(applicationId: string, requestKey: s
     const value = asText(answer.answer);
     return value.length > 0 && normalized(sourceText).includes(normalized(value));
   }).map((answer) => ({ question: asText(answer.question), answer: asText(answer.answer), source: asText(answer.source) || "Currículo autorizado" }));
-  const unverifiedRequirements = asList(generated.unverifiedRequirements).slice(0, 30);
+  const unverifiedRequirements = [...new Set([
+    ...asList(generated.unverifiedRequirements),
+    ...(tailoredResume.validationWarnings ?? []),
+    ...unsupportedCoverSkills.map((skill) => `Revisar afirmação sobre ${skill} na carta de apresentação.`),
+  ])].slice(0, 30);
   const requiredConfirmations = [...new Set([...REQUIRED_CONFIRMATIONS, ...asList(generated.requiredConfirmations)])].slice(0, 30);
   const submissionChecklist = ["Revisar currículo adaptado", "Revisar e aprovar a cover letter", "Confirmar salário, autorização de trabalho, visto, disponibilidade e realocação", "Responder às perguntas específicas do empregador", "Enviar manualmente no portal oficial", "Registrar a confirmação de envio no CRM"];
   const version = await prisma.applicationKit.count({ where: { applicationId } }).then((count) => count + 1);
