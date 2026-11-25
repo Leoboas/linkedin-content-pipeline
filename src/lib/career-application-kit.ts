@@ -76,6 +76,14 @@ function isSupportedSkill(skill: string, source: string, sourceSkills: Set<strin
     || CAPABILITY_LABELS.has(compact);
 }
 
+function fallbackCoverLetter(input: { title: string; company: string | null; language: AuthorizedResumeLanguage }): string {
+  const company = input.company?.trim() || "the hiring team";
+  if (input.language === "PT_BR") {
+    return `Olá, ${company}. Tenho interesse na posição de ${input.title}. Meu currículo anexado reúne experiência técnica e projetos que podem ser avaliados diretamente no material enviado. Gostaria de conversar sobre os desafios da função, o contexto da equipe e como posso contribuir de forma prática com as prioridades descritas na vaga. Obrigado pela consideração.`;
+  }
+  return `Hello ${company}, I am interested in the ${input.title} position. My attached resume documents my technical experience and projects for your review. I would welcome a conversation about the role, the team context, and how I could contribute in a practical way to the priorities described in the job posting. Thank you for your consideration.`;
+}
+
 function parseResume(value: Record<string, unknown>, sourceText: string, options?: { allowUnsupportedSkills?: boolean }): TailoredResume {
   const source = normalized(sourceText);
   const skills = new Set(normalizeSkills(extractSkillsFromText(sourceText)).map(normalized));
@@ -211,7 +219,9 @@ export async function prepareApplicationKit(applicationId: string, requestKey: s
     await updatePreparation(applicationId, ApplicationPreparationStatus.NEEDS_INFORMATION, { requestKey, note: error instanceof Error ? error.message : "Revisão factual necessária." });
     return { kitId: null, reviewStatus: ApplicationKitReviewStatus.NEEDS_INFORMATION, version: null, missing: "FACTUAL_VALIDATION" };
   }
-  const coverLetter = asText(generated.coverLetter);
+  let coverLetter = asText(generated.coverLetter);
+  const usedFallbackCoverLetter = coverLetter.length < 120;
+  if (usedFallbackCoverLetter) coverLetter = fallbackCoverLetter({ title: application.job.title, company: application.job.company, language });
   if (coverLetter.length < 120) {
     await updatePreparation(applicationId, ApplicationPreparationStatus.NEEDS_INFORMATION, { requestKey, note: "A carta gerada está incompleta; revise ou regenere o kit." });
     return { kitId: null, reviewStatus: ApplicationKitReviewStatus.NEEDS_INFORMATION, version: null, missing: "COVER_LETTER" };
@@ -232,6 +242,7 @@ export async function prepareApplicationKit(applicationId: string, requestKey: s
     ...asList(generated.unverifiedRequirements),
     ...(tailoredResume.validationWarnings ?? []),
     ...unsupportedCoverSkills.map((skill) => `Revisar afirmação sobre ${skill} na carta de apresentação.`),
+    ...(usedFallbackCoverLetter ? ["A carta de apresentação foi substituída por uma versão-base segura porque a resposta da IA estava incompleta; revise antes de autorizar o envio."] : []),
   ])].slice(0, 30);
   const requiredConfirmations = [...new Set([...REQUIRED_CONFIRMATIONS, ...asList(generated.requiredConfirmations)])].slice(0, 30);
   const submissionChecklist = ["Revisar currículo adaptado", "Revisar e aprovar a cover letter", "Confirmar salário, autorização de trabalho, visto, disponibilidade e realocação", "Responder às perguntas específicas do empregador", "Enviar manualmente no portal oficial", "Registrar a confirmação de envio no CRM"];
