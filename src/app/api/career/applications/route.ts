@@ -28,7 +28,7 @@ export async function GET(request: Request): Promise<NextResponse> {
       job: { include: { matches: { where: { profileId: profile.id }, take: 1, include: { recommendedResume: { select: { id: true, originalName: true, version: true, sha256: true } } } } } },
       resumeDraft: { select: { id: true, targetRole: true, atsScore: true, status: true } },
       authorizedResume: { select: { id: true, originalName: true, version: true, language: true, sha256: true } },
-      kits: { orderBy: { version: "desc" }, take: 5, select: { id: true, version: true, language: true, coverLetter: true, reviewStatus: true, documentSha256: true, createdAt: true, requiredConfirmations: true, unverifiedRequirements: true } },
+      kits: { orderBy: { version: "desc" }, take: 5, select: { id: true, version: true, language: true, coverLetter: true, knownAnswers: true, reviewStatus: true, documentSha256: true, createdAt: true, requiredConfirmations: true, unverifiedRequirements: true } },
       submissions: { orderBy: { authorizedAt: "desc" }, take: 5, select: { id: true, kitId: true, state: true, reason: true, portalReceipt: true, authorizedAt: true, updatedAt: true } },
       events: { orderBy: { createdAt: "desc" }, take: 30 },
     },

@@ -1300,12 +1300,23 @@ model ApplicationSubmission {
   startedAt       DateTime?
   submittingAt    DateTime?
   confirmedAt     DateTime?
+  // Browser executor credentials are short-lived, stored only as a hash, and
+  // scoped to this immutable submission package.
+  executorMode            String   @default("SERVER_API")
+  executorTokenHash       String?
+  executorTokenExpiresAt  DateTime?
+  executorClaimedAt       DateTime?
+  executorCompletedAt     DateTime?
+  executorAttempt         Int      @default(0)
+  executorEvidence        Json?
   updatedAt       DateTime       @updatedAt
   application     JobApplication @relation(fields: [applicationId], references: [id], onDelete: Restrict)
   kit             ApplicationKit @relation(fields: [kitId], references: [id], onDelete: Restrict)
 
   @@index([state, dispatchedAt])
   @@index([applicationId, authorizedAt])
+  @@index([executorTokenHash])
+  @@index([executorMode, state, executorTokenExpiresAt])
 }
 
 model JobMatch {

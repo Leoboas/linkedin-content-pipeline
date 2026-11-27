@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { PrismaClient } from "@prisma/client";
-import { assertProductionMigrationAcknowledgements, productionExpectedAppliedMigrations, productionExpectedPendingMigrations, productionExpectedPostApplyMigrations } from "./lib/production-migration-guard.ts";
+import { assertProductionMigrationAcknowledgements, productionExpectedAppliedMigrations, productionExpectedPostApplyMigrations } from "./lib/production-migration-guard.ts";
 
 const root = process.cwd();
 const expectedHost = "ep-rapid-smoke-acgsved1.sa-east-1.aws.neon.tech";
@@ -132,10 +132,10 @@ async function main(): Promise<void> {
     }
     const successfulNamesMatch = (expected: readonly string[]) => successful.length === expected.length
       && expected.every((name, index) => successful[index]?.migration_name === name);
-    const isKnownPreApplyState = successfulNamesMatch(productionExpectedAppliedMigrations);
-    const isKnownPostApplyState = successfulNamesMatch(productionExpectedPostApplyMigrations);
-    if (!isKnownPreApplyState && !isKnownPostApplyState) {
-      throw new Error("O histórico bem-sucedido de Production não corresponde ao estado esperado antes (19) ou depois (20) da migration.");
+    const expectedStates = Array.from({ length: productionExpectedPostApplyMigrations.length - productionExpectedAppliedMigrations.length + 1 }, (_, offset) => productionExpectedPostApplyMigrations.slice(0, productionExpectedAppliedMigrations.length + offset));
+    const currentStateIndex = expectedStates.findIndex((expected) => successfulNamesMatch(expected));
+    if (currentStateIndex < 0) {
+      throw new Error("O histórico bem-sucedido de Production não corresponde a um estado aprovado da cadeia de migrations.");
     }
     if (successful.length > migrationNames.length
       || successful.some((migration, index) => migration.migration_name !== migrationNames[index])) {
@@ -147,10 +147,11 @@ async function main(): Promise<void> {
       if (checksum !== migration.checksum) throw new Error(`Checksum divergente para ${migration.migration_name}.`);
     }
     const pending = migrationNames.filter((name) => !successfulNames.includes(name));
-    const hasExpectedPending = pending.length === productionExpectedPendingMigrations.length
-      && productionExpectedPendingMigrations.every((name, index) => pending[index] === name);
-    if ((isKnownPreApplyState && !hasExpectedPending) || (isKnownPostApplyState && pending.length !== 0)) {
-      throw new Error(`A cadeia pendente difere da migration esperada ${productionExpectedPendingMigrations.join(", ")}: ${pending.join(", ") || "nenhuma"}.`);
+    const expectedPending = productionExpectedPostApplyMigrations.slice(successful.length);
+    const hasExpectedPending = pending.length === expectedPending.length
+      && expectedPending.every((name, index) => pending[index] === name);
+    if (!hasExpectedPending) {
+      throw new Error(`A cadeia pendente difere das migrations esperadas ${expectedPending.join(", ") || "nenhuma"}: ${pending.join(", ") || "nenhuma"}.`);
     }
     for (const name of pending) {
       const sql = readFileSync(resolve(migrationRoot, name, "migration.sql"), "utf8");

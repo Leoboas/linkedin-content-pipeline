@@ -23,6 +23,13 @@ export const productionExpectedAppliedMigrations = [
 
 export const productionExpectedPendingMigrations = [
   "20261124190000_application_submission_authorization",
+  "20261127110000_browser_application_executor",
+  "20261127111500_browser_executor_index_name",
+] as const;
+
+export const productionExpectedIntermediateMigrations = [
+  ...productionExpectedAppliedMigrations,
+  "20261124190000_application_submission_authorization",
 ] as const;
 
 export const productionExpectedPostApplyMigrations = [

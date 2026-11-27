@@ -3,6 +3,7 @@ import { runCareerScan } from "@/lib/career-engine";
 import { prepareApplicationKit } from "@/lib/career-application-kit";
 import type { CareerSourceKey } from "@/lib/job-source-connectors";
 import { dispatchSubmission, processSubmission } from "@/lib/career-submission";
+import { markBrowserExecutorReady } from "@/lib/browser-application-executor";
 import { prisma } from "@/lib/prisma";
 
 export const careerSearchPipeline = inngest.createFunction(
@@ -46,6 +47,18 @@ export const submitCareerApplication = inngest.createFunction(
   },
 );
 
+// The browser itself performs the portal interaction; this durable event only
+// makes the approved package available and records that it is ready to claim.
+export const readyBrowserCareerApplication = inngest.createFunction(
+  { id: "career-ready-browser-application", retries: 2, idempotency: "event.data.submissionId", concurrency: { limit: 1, key: "event.data.submissionId" } },
+  { event: "career/application.browser.requested" },
+  async ({ event, step }) => {
+    const id = (event.data as { submissionId?: string }).submissionId;
+    if (!id || !/^[0-9a-f-]{36}$/iu.test(id)) throw new Error("Identificador de execução no navegador inválido.");
+    return step.run("ready-browser-executor", () => markBrowserExecutorReady(id));
+  },
+);
+
 export const recoverCareerSubmissionOutbox = inngest.createFunction(
   { id: "career-submission-outbox", retries: 2 },
   { cron: "*/5 * * * *" },
@@ -53,9 +66,11 @@ export const recoverCareerSubmissionOutbox = inngest.createFunction(
     const cutoff = new Date(Date.now() - 10 * 60 * 1000);
     const pending = await prisma.applicationSubmission.findMany({ where: { state: "QUEUED", OR: [{ dispatchedAt: null }, { dispatchedAt: { lt: cutoff } }] }, select: { id: true }, take: 25 });
     for (const item of pending) await dispatchSubmission(item.id);
+    const pendingBrowser = await prisma.applicationSubmission.findMany({ where: { executorMode: "ASSISTED_BROWSER", state: "BROWSER_QUEUED" }, select: { id: true }, take: 25 });
+    for (const item of pendingBrowser) await inngest.send({ id: `browser-application:${item.id}`, name: "career/application.browser.requested", data: { submissionId: item.id } });
     // A crash after the portal request started cannot be retried safely.
     await prisma.applicationSubmission.updateMany({ where: { state: "SUBMITTING", submittingAt: { lt: cutoff } }, data: { state: "UNCERTAIN", reason: "O resultado do envio não foi confirmado. Confira o portal antes de tentar novamente." } });
     await prisma.applicationSubmission.updateMany({ where: { state: "FILLING", startedAt: { lt: cutoff } }, data: { state: "NEEDS_ACTION", reason: "A preparação foi interrompida antes do envio; revise o pacote." } });
-    return { pending: pending.length };
+    return { pending: pending.length, pendingBrowser: pendingBrowser.length };
   }),
 );

@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "PipelinePost Career Autofill",
+  "version": "0.1.0",
+  "description": "Preenche candidaturas previamente aprovadas no PipelinePost e registra o resultado no painel.",
+  "permissions": ["storage", "tabs"],
+  "host_permissions": ["https://linkedin-content-pipeline-sooty.vercel.app/*", "https://*.vercel.app/*", "https://*/*"],
+  "background": { "service_worker": "service-worker.js", "type": "module" },
+  "content_scripts": [{ "matches": ["https://linkedin-content-pipeline-sooty.vercel.app/*", "https://*.vercel.app/*", "https://*/*"], "js": ["content-script.js"], "run_at": "document_idle" }],
+  "action": { "default_title": "PipelinePost Career Autofill", "default_popup": "popup.html" }
+}
