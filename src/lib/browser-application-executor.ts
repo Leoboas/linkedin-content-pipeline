@@ -63,7 +63,7 @@ export async function authorizeBrowserSubmission(kitId: string, profileId: strin
   if (latest?.id !== kit.id) throw new Error("O pacote mudou; atualize a revisão antes de autorizar.");
   requireUrl(kit.application.job.url);
   const existing = await prisma.applicationSubmission.findUnique({ where: { kitId: kit.id }, select: { id: true, state: true, executorMode: true } });
-  const renewable = existing?.executorMode === "ASSISTED_BROWSER" && existing.state === "NEEDS_ACTION";
+  const renewable = existing?.executorMode === "ASSISTED_BROWSER" && ["BROWSER_QUEUED", "BROWSER_READY", "NEEDS_ACTION"].includes(existing.state);
   if (existing && (!options?.renew || !renewable)) return { submission: existing, activationToken: null as string | null };
   if (!existing && kit.reviewStatus !== "NEEDS_REVIEW") throw new Error("Apenas a versão mais recente ainda em revisão pode ser autorizada.");
   const activationToken = randomBytes(32).toString("base64url");

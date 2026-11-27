@@ -3,7 +3,10 @@
   if (dashboard) {
     window.addEventListener("message", (event) => {
       if (event.source !== window || event.origin !== location.origin || event.data?.type !== "PIPELINEPOST_BROWSER_APPLICATION_AUTHORIZED") return;
-      chrome.runtime.sendMessage({ type: "PIPELINEPOST_STORE_AUTHORIZATION", payload: event.data.payload });
+      chrome.runtime.sendMessage({ type: "PIPELINEPOST_STORE_AUTHORIZATION", payload: event.data.payload }, (result) => {
+        const error = chrome.runtime.lastError?.message;
+        window.postMessage({ type: "PIPELINEPOST_BROWSER_APPLICATION_HANDOFF_RESULT", payload: error ? { ok: false, error } : result ?? { ok: false, error: "A extensão não confirmou o recebimento." } }, location.origin);
+      });
     });
     return;
   }
