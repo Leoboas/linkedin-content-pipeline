@@ -10,7 +10,8 @@ export async function POST(request: Request, context: { params: Promise<{ id: st
   try {
     const { id } = await context.params;
     const profile = await getOrCreateProfile();
-    const result = await authorizeBrowserSubmission(id, profile.id);
+    const body = await request.json().catch(() => ({})) as { renew?: unknown };
+    const result = await authorizeBrowserSubmission(id, profile.id, { renew: body.renew === true });
     return NextResponse.json(result, { status: 202, headers: { "Cache-Control": "private, no-store" } });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "Não foi possível autorizar a extensão." }, { status: 409 });

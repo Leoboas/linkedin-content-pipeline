@@ -56,16 +56,26 @@ function contactFromProfileJson() {
   }
 }
 
-export async function authorizeBrowserSubmission(kitId: string, profileId: string) {
+export async function authorizeBrowserSubmission(kitId: string, profileId: string, options?: { renew?: boolean }) {
   const kit = await prisma.applicationKit.findFirst({ where: { id: kitId, application: { profileId } }, include: { application: { include: { job: true } } } });
   if (!kit) throw new Error("Kit não encontrado.");
   const latest = await prisma.applicationKit.findFirst({ where: { applicationId: kit.applicationId }, orderBy: { version: "desc" }, select: { id: true } });
-  if (latest?.id !== kit.id || kit.reviewStatus !== "NEEDS_REVIEW") throw new Error("Apenas a versão mais recente ainda em revisão pode ser autorizada.");
+  if (latest?.id !== kit.id) throw new Error("O pacote mudou; atualize a revisão antes de autorizar.");
   requireUrl(kit.application.job.url);
   const existing = await prisma.applicationSubmission.findUnique({ where: { kitId: kit.id }, select: { id: true, state: true, executorMode: true } });
-  if (existing) return { submission: existing, activationToken: null as string | null };
+  const renewable = existing?.executorMode === "ASSISTED_BROWSER" && existing.state === "NEEDS_ACTION";
+  if (existing && (!options?.renew || !renewable)) return { submission: existing, activationToken: null as string | null };
+  if (!existing && kit.reviewStatus !== "NEEDS_REVIEW") throw new Error("Apenas a versão mais recente ainda em revisão pode ser autorizada.");
   const activationToken = randomBytes(32).toString("base64url");
   const expiresAt = new Date(Date.now() + TOKEN_TTL_MS);
+  if (existing) {
+    const submission = await prisma.applicationSubmission.update({
+      where: { id: existing.id },
+      data: { executorTokenHash: tokenHash(activationToken), executorTokenExpiresAt: expiresAt, executorClaimedAt: null, executorCompletedAt: null, state: "BROWSER_QUEUED", reason: "Nova credencial de navegador emitida para retomar a pendência.", executorEvidence: Prisma.JsonNull },
+    });
+    try { await inngest.send({ id: `browser-application:${submission.id}:renewal:${Date.now()}`, name: "career/application.browser.requested", data: { submissionId: submission.id } }); } catch { /* Outbox recovery handles BROWSER_QUEUED. */ }
+    return { submission: { id: submission.id, state: submission.state, executorMode: submission.executorMode }, activationToken };
+  }
   const document = { language: kit.language, tailoredResume: kit.tailoredResume as never, coverLetter: kit.coverLetter, jobTitle: kit.application.job.title, company: kit.application.job.company, version: kit.version } as const;
   const [resume, coverLetter] = await Promise.all([buildApplicationKitPdf(document, "resume"), buildApplicationKitPdf(document, "cover")]);
   const digest = packageHash(kit, resume, coverLetter);
