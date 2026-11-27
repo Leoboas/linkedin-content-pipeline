@@ -1,12 +1,36 @@
 (() => {
+  const extensionMessage = (message) => new Promise((resolve, reject) => {
+    if (!globalThis.chrome?.runtime?.id) {
+      reject(new Error("EXTENSION_CONTEXT_INVALIDATED"));
+      return;
+    }
+    try {
+      chrome.runtime.sendMessage(message, (response) => {
+        const runtimeError = globalThis.chrome?.runtime?.lastError?.message;
+        if (runtimeError) {
+          reject(new Error(runtimeError));
+          return;
+        }
+        resolve(response);
+      });
+    } catch (error) {
+      reject(error);
+    }
+  });
+  const handoffResult = (payload) => window.postMessage({ type: "PIPELINEPOST_BROWSER_APPLICATION_HANDOFF_RESULT", payload }, location.origin);
+  const extensionReloadMessage = "A extensao foi recarregada. Atualize esta pagina do painel e tente novamente.";
   const dashboard = location.hostname.endsWith("vercel.app") && location.pathname.startsWith("/career");
   if (dashboard) {
     window.addEventListener("message", (event) => {
       if (event.source !== window || event.origin !== location.origin || event.data?.type !== "PIPELINEPOST_BROWSER_APPLICATION_AUTHORIZED") return;
-      chrome.runtime.sendMessage({ type: "PIPELINEPOST_STORE_AUTHORIZATION", payload: event.data.payload }, (result) => {
-        const error = chrome.runtime.lastError?.message;
-        window.postMessage({ type: "PIPELINEPOST_BROWSER_APPLICATION_HANDOFF_RESULT", payload: error ? { ok: false, error } : result ?? { ok: false, error: "A extensão não confirmou o recebimento." } }, location.origin);
-      });
+      void extensionMessage({ type: "PIPELINEPOST_STORE_AUTHORIZATION", payload: event.data.payload })
+        .then((result) => handoffResult(result ?? { ok: false, error: "A extensao nao confirmou o recebimento." }))
+        .catch((error) => handoffResult({
+          ok: false,
+          error: String(error?.message ?? error).includes("invalidated") || String(error?.message ?? error).includes("EXTENSION_CONTEXT_INVALIDATED")
+            ? extensionReloadMessage
+            : String(error?.message ?? error),
+        }));
     });
     return;
   }
@@ -62,7 +86,7 @@
       const receipt = confirmationText();
       if (!receipt) return;
       await report(session, "CONFIRMED", "O portal exibiu confirmação de candidatura.", { url: location.href, receipt });
-      await chrome.runtime.sendMessage({ type: "PIPELINEPOST_CLEAR_AUTHORIZATION" });
+      await extensionMessage({ type: "PIPELINEPOST_CLEAR_AUTHORIZATION" }).catch(() => {});
       observer.disconnect();
     };
     const observer = new MutationObserver(() => { void confirm().catch(() => {}); });
@@ -77,7 +101,13 @@
     void confirm().catch(() => {});
   };
   const run = async () => {
-    const session = await chrome.runtime.sendMessage({ type: "PIPELINEPOST_GET_AUTHORIZATION" });
+    let session;
+    try {
+      session = await extensionMessage({ type: "PIPELINEPOST_GET_AUTHORIZATION" });
+    } catch {
+      // A recarga da extensao invalida o script injetado nesta pagina. Nao tente preencher nada.
+      return;
+    }
     if (!session || normalized(session.destinationUrl) !== normalized(location.href)) return;
     try {
       if (!(await waitForForm())) throw new Error("O portal não carregou campos de formulário a tempo.");
