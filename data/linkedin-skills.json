@@ -3,6 +3,8 @@
   "source": "LinkedIn skill taxonomy mapping curated for this project",
   "skills": {
     "Python (Programming Language)": ["python", "python3", "python 3", "python programming", "python developer"],
+    "Java": ["java", "java se", "java ee", "jdk", "jvm"],
+    "Spring Framework": ["spring", "spring framework", "spring boot", "springboot"],
     "JavaScript": ["javascript", "js", "ecmascript"],
     "TypeScript": ["typescript", "ts"],
     "Node.js": ["node", "nodejs", "node.js"],

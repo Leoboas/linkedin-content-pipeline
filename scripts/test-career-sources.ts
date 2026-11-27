@@ -3,6 +3,7 @@ import { assessJobEligibility, CAREER_APPLICATION_CAPABILITIES, fetchCareerSourc
 import { AUTHORIZED_RESUMES, getResumeMetadataByName, recommendAuthorizedResume } from "../config/authorized-resumes";
 import { ASSOCIATED_JOB_TITLES, normalizeCareerTargetTitles, TARGET_JOB_TITLES } from "../config/job-targets";
 import { calculateMatch } from "../src/lib/career-rag";
+import { extractSkillsFromText } from "../src/lib/skills-normalizer";
 
 assert.ok(TARGET_JOB_TITLES.includes("Python Backend Engineer"));
 assert.ok(TARGET_JOB_TITLES.includes("Data Engineer"));
@@ -15,10 +16,21 @@ const matchCase = calculateMatch({
   jobTitle: "Senior Python Backend Engineer",
   jobDescription: "Build Python REST APIs and backend systems with PostgreSQL and AWS. Design system architecture and observability.",
 });
-assert.equal(matchCase.scoreVersion, "career-match-v2");
+assert.equal(matchCase.scoreVersion, "career-match-v3-primary-stack");
 assert.ok(matchCase.score >= 0 && matchCase.score <= 100);
 assert.ok(matchCase.scoreBreakdown.technicalSkills > 0 && matchCase.scoreBreakdown.roleAlignment > 0);
 assert.ok(matchCase.matchedSkills.includes("Python (Programming Language)"));
+
+const javaFirstRole = calculateMatch({
+  profileSkills: ["Python", "AWS", "Node.js", "TypeScript"],
+  profileContext: "Senior Python backend and data engineering experience.",
+  jobTitle: "Senior Java Engineer",
+  jobDescription: "Required: Java and Spring Boot. Experience with APIs and AWS.",
+});
+assert.ok(javaFirstRole.skillGaps.includes("Java"), "Java must be shown as an explicit gap when it is not evidenced in the profile");
+assert.ok(javaFirstRole.score <= 45, "a missing required primary stack must cap the recommendation score");
+assert.equal(javaFirstRole.label, "Baixo match");
+assert.ok(!extractSkillsFromText("JavaScript and TypeScript").includes("Java"), "JavaScript must not be parsed as Java");
 
 assert.equal(normalizeCountryCode("Brasil"), "BR");
 assert.equal(normalizeCountryCode("Brazil"), "BR");

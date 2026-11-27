@@ -29,9 +29,32 @@ export type BrowserExecutorPayload = {
   title: string;
   packageHash: string;
   answers: Record<string, unknown>;
+  candidate: { name: string; email?: string; phone?: string; location?: string; linkedinUrl?: string; githubUrl?: string; portfolioUrl?: string };
   documents: { resume: { filename: string; base64: string }; coverLetter: { filename: string; base64: string } };
   submitMode: "AUTO_SUBMIT";
 };
+
+function text(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+// Contact data crosses the boundary only for the exact browser session that
+// the user approved. It is never placed in logs or execution evidence.
+function contactFromProfileJson() {
+  const raw = process.env.CAREER_PROFILE_JSON?.trim();
+  if (!raw) return {};
+  try {
+    const parsed = JSON.parse(raw.startsWith("'") && raw.endsWith("'") ? raw.slice(1, -1) : raw) as Record<string, unknown>;
+    return {
+      email: text(parsed.email),
+      phone: text(parsed.phone),
+      githubUrl: text(parsed.githubUrl) ?? text(parsed.github),
+      portfolioUrl: text(parsed.portfolioUrl) ?? text(parsed.portfolio),
+    };
+  } catch {
+    return {};
+  }
+}
 
 export async function authorizeBrowserSubmission(kitId: string, profileId: string) {
   const kit = await prisma.applicationKit.findFirst({ where: { id: kitId, application: { profileId } }, include: { application: { include: { job: true } } } });
@@ -70,24 +93,35 @@ export async function authorizeBrowserSubmission(kitId: string, profileId: strin
 
 async function findByToken(token: string) {
   if (!token || token.length < 32) throw new Error("Credencial da extensão inválida.");
-  const submission = await prisma.applicationSubmission.findFirst({ where: { executorTokenHash: tokenHash(token), executorMode: "ASSISTED_BROWSER" }, include: { application: { include: { job: true } }, kit: true } });
+  const submission = await prisma.applicationSubmission.findFirst({ where: { executorTokenHash: tokenHash(token), executorMode: "ASSISTED_BROWSER" }, include: { application: { include: { job: true, profile: true } }, kit: true } });
   if (!submission || !submission.executorTokenExpiresAt || submission.executorTokenExpiresAt < new Date()) throw new Error("A autorização da extensão expirou. Revise e autorize novamente.");
   return submission;
 }
 
 export async function claimBrowserExecutor(token: string): Promise<BrowserExecutorPayload> {
   const record = await findByToken(token);
-  if (!["BROWSER_QUEUED", "BROWSER_READY", "BROWSER_FILLING"].includes(record.state)) throw new Error("Esta autorização não está disponível para preenchimento.");
+  if (!["BROWSER_QUEUED", "BROWSER_READY", "BROWSER_FILLING", "NEEDS_ACTION"].includes(record.state)) throw new Error("Esta autorização não está disponível para preenchimento.");
   const hash = packageHash(record.kit, record.resumePdf, record.coverLetterPdf);
   if (hash !== record.packageHash) throw new Error("O pacote aprovado foi alterado; é necessária uma nova revisão.");
   await prisma.applicationSubmission.update({ where: { id: record.id }, data: { state: "BROWSER_FILLING", executorClaimedAt: new Date(), executorAttempt: { increment: 1 }, reason: null } });
-  return { submissionId: record.id, destinationUrl: record.destinationUrl, company: record.application.job.company, title: record.application.job.title, packageHash: record.packageHash, answers: record.answersSnapshot as Record<string, unknown>, documents: { resume: { filename: "curriculo.pdf", base64: Buffer.from(record.resumePdf).toString("base64") }, coverLetter: { filename: "carta-apresentacao.pdf", base64: Buffer.from(record.coverLetterPdf).toString("base64") } }, submitMode: "AUTO_SUBMIT" };
+  const privateContact = contactFromProfileJson();
+  return {
+    submissionId: record.id,
+    destinationUrl: record.destinationUrl,
+    company: record.application.job.company,
+    title: record.application.job.title,
+    packageHash: record.packageHash,
+    answers: record.answersSnapshot as Record<string, unknown>,
+    candidate: { name: record.application.profile.name, location: record.application.profile.location ?? undefined, linkedinUrl: record.application.profile.linkedinUrl ?? undefined, ...privateContact },
+    documents: { resume: { filename: "curriculo.pdf", base64: Buffer.from(record.resumePdf).toString("base64") }, coverLetter: { filename: "carta-apresentacao.pdf", base64: Buffer.from(record.coverLetterPdf).toString("base64") } },
+    submitMode: "AUTO_SUBMIT",
+  };
 }
 
 export async function reportBrowserExecutor(token: string, input: { state: string; evidence?: Record<string, unknown>; reason?: string }) {
   const record = await findByToken(token);
   if (!browserStates.has(input.state)) throw new Error("Estado da extensão inválido.");
-  const allowed: Record<string, string[]> = { BROWSER_QUEUED: ["BROWSER_READY", "BROWSER_FILLING", "NEEDS_ACTION"], BROWSER_READY: ["BROWSER_FILLING", "NEEDS_ACTION"], BROWSER_FILLING: ["BROWSER_FILLED", "BROWSER_SUBMITTING", "NEEDS_ACTION", "UNCERTAIN"], BROWSER_FILLED: ["BROWSER_SUBMITTING", "NEEDS_ACTION"], BROWSER_SUBMITTING: ["CONFIRMED", "UNCERTAIN", "NEEDS_ACTION"] };
+  const allowed: Record<string, string[]> = { BROWSER_QUEUED: ["BROWSER_READY", "BROWSER_FILLING", "NEEDS_ACTION"], BROWSER_READY: ["BROWSER_FILLING", "NEEDS_ACTION"], BROWSER_FILLING: ["BROWSER_FILLED", "BROWSER_SUBMITTING", "NEEDS_ACTION", "UNCERTAIN"], BROWSER_FILLED: ["BROWSER_SUBMITTING", "NEEDS_ACTION"], BROWSER_SUBMITTING: ["CONFIRMED", "UNCERTAIN", "NEEDS_ACTION"], NEEDS_ACTION: ["BROWSER_FILLING", "BROWSER_FILLED", "BROWSER_SUBMITTING", "CONFIRMED", "UNCERTAIN"] };
   if (record.state !== input.state && !allowed[record.state]?.includes(input.state)) throw new Error("Transição da extensão não permitida.");
   const safeReason = input.reason?.slice(0, 400) ?? null;
   await prisma.$transaction(async (tx) => {

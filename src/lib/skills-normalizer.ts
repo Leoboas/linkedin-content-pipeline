@@ -33,8 +33,11 @@ const positioningAliases = new Map(
 );
 
 function containsAlias(text: string, alias: string): boolean {
-  if (alias.length <= 3) return new RegExp(`(^|\\s)${alias.replace(/[+.#]/g, "\\$&")}(?=\\s|$)`, "i").test(text);
-  return text.includes(alias);
+  // Substring matching made "Java" appear inside "JavaScript", which then
+  // inflated a match for Java-first positions. Every alias is now matched on
+  // normalized word boundaries while preserving multi-word technologies.
+  const escaped = alias.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+  return new RegExp(`(^|\\s)${escaped}(?=\\s|$)`, "i").test(text);
 }
 
 function recoverMalformedCanonical(raw: string): string | null {
